@@ -17,8 +17,8 @@ export interface MergeResult {
   primarySource: string
 }
 
-// Noise words to filter from raw Tesseract OCR text
-const NOISE_PATTERNS = [
+// Noise patterns for raw Tesseract OCR text
+const TESSERACT_NOISE_PATTERNS = [
   /^net\s*w[te]/i,
   /^mfg/i,
   /^exp/i,
@@ -49,6 +49,46 @@ const NOISE_PATTERNS = [
   /^calories/i,
 ]
 
+// Junk tokens that ALL sources (including Gemini) may produce —
+// these are label notes, warnings, or purpose descriptions, NOT ingredients
+const JUNK_INGREDIENT_PATTERNS = [
+  /^preserves?\s+(freshness|color|colour|flavor|flavour)/i,
+  /^to\s+(protect|preserve|maintain|prevent|improve|enhance)\s/i,
+  /^for\s+(color|colour|freshness|flavor|flavour|texture)/i,
+  /^added\s+(to|for|as)\s/i,
+  /^as\s+a?\s*(preservative|stabilizer|emulsifier|thickener|antioxidant)$/i,
+  /^contains\s+/i,
+  /^phenylketonurics/i,
+  /^phenylalanine\s*source/i,
+  /^see\s+(cap|lid|label|pack)/i,
+  /^keep\s+(refrigerated|frozen|cool|dry)/i,
+  /^shake\s+well/i,
+  /^serve\s+(chilled|cold|warm)/i,
+  /^best\s+served/i,
+  /^not\s+a\s+significant/i,
+  /^percent\s+daily/i,
+  /^daily\s+value/i,
+  /^\*?\s*percent\s/i,
+  /^produced\s+(in|at|by)/i,
+  /^distributed\s+by/i,
+  /^imported\s+by/i,
+  /^warning/i,
+  /^caution/i,
+  /^disclaimer/i,
+]
+
+/**
+ * Check if a token is a junk/noise ingredient name (label note, not a real ingredient).
+ */
+function isJunkIngredient(name: string): boolean {
+  const trimmed = name.trim()
+  if (trimmed.length < 2) return true
+  for (const pattern of JUNK_INGREDIENT_PATTERNS) {
+    if (pattern.test(trimmed)) return true
+  }
+  return false
+}
+
 /**
  * Parse raw OCR text (from Tesseract) into an ingredient list.
  * Splits on commas, semicolons, newlines. Filters noise and junk tokens.
@@ -69,7 +109,7 @@ export function parseRawOcrToIngredients(rawText: string): string[] {
     .filter(t => !/^\d+\.?\d*$/.test(t)) // pure numbers
     .filter(t => !/^\d+\s*%$/.test(t))   // pure percentages
     .filter(t => {
-      for (const pattern of NOISE_PATTERNS) {
+      for (const pattern of TESSERACT_NOISE_PATTERNS) {
         if (pattern.test(t)) return false
       }
       return true
@@ -133,6 +173,57 @@ function deduplicateIngredients(allNames: string[]): string[] {
   }
 
   return result.map(r => r.original)
+}
+
+// Parent ingredient names that precede E-number/INS codes
+const CODE_PARENT_PATTERNS = [
+  /^(flavou?r\s*enhancer)$/i,
+  /^(thickener)$/i,
+  /^(acidity\s*regulator)$/i,
+  /^(colou?r)$/i,
+  /^(emulsifier)$/i,
+  /^(stabiliser|stabilizer)$/i,
+  /^(preservative)$/i,
+  /^(antioxidant)$/i,
+  /^(raising\s*agent)$/i,
+  /^(humectant)$/i,
+  /^(gelling\s*agent)$/i,
+  /^(anti[- ]?caking\s*agent)$/i,
+  /^(sequestrant)$/i,
+  /^(firming\s*agent)$/i,
+  /^(glazing\s*agent)$/i,
+  /^(mineral)s?$/i,
+  /^(vitamin)s?$/i,
+]
+
+/**
+ * Rejoin orphaned E-numbers/INS codes with their preceding parent ingredient.
+ * e.g. ["Flavour enhancer", "635", "Palm oil"] → ["Flavour enhancer (635)", "Palm oil"]
+ */
+function rejoinOrphanedCodes(names: string[]): string[] {
+  const result: string[] = []
+
+  for (let i = 0; i < names.length; i++) {
+    const current = names[i].trim()
+
+    // Check if current is a bare code (pure number or E-number like "E150d", "150d", "635")
+    const isCode = /^[Ee]?\d{3,4}[a-z]?$/i.test(current)
+
+    if (isCode && result.length > 0) {
+      const prev = result[result.length - 1]
+      const isParent = CODE_PARENT_PATTERNS.some(p => p.test(prev))
+
+      if (isParent) {
+        // Merge: "Flavour enhancer" + "635" → "Flavour enhancer (635)"
+        result[result.length - 1] = `${prev} (${current})`
+        continue
+      }
+    }
+
+    result.push(current)
+  }
+
+  return result
 }
 
 /**
@@ -199,8 +290,13 @@ export function mergeOcrResults({
   const brand = sources.find(s => s.brand)?.brand || ''
   const category = sources.find(s => s.category)?.category || 'food'
 
-  // Union-deduplicate ingredients
-  const mergedNames = deduplicateIngredients(allIngredientNames)
+  // Rejoin orphaned E-numbers/INS codes with their parent ingredient
+  // e.g. ["Flavour enhancer", "635"] → ["Flavour enhancer (635)"]
+  const rejoined = rejoinOrphanedCodes(allIngredientNames)
+
+  // Union-deduplicate ingredients, then filter junk from ALL sources
+  const mergedNames = deduplicateIngredients(rejoined)
+    .filter(name => !isJunkIngredient(name))
 
   // Build final ingredients list, preserving percentages from Gemini where available
   const geminiPercentageMap = new Map<string, string>()

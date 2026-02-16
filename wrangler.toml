@@ -1,4 +1,4 @@
-name = "consumer-truth"
+name = "sage-insight"
 main = ".open-next/worker.js"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
@@ -37,4 +37,7 @@ binding = "AI"
 [vars]
 NODE_ENV = "production"
 WHATSAPP_PHONE_NUMBER_ID = "your_phone_number_id"
-NEXT_PUBLIC_APP_URL = "https://your-worker.workers.dev"
+NEXT_PUBLIC_APP_URL = "https://sage-insight.cloudsequrity.com"
+
+[[custom_domains]]
+hostname = "sage-insight.cloudsequrity.com"
