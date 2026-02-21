@@ -5,6 +5,115 @@ import { lookupIngredientsContext, lookupProductContext } from './product-data'
 import { mergeOcrResults } from './ocr-merge'
 import { extractWithWorkersAI } from './workers-ai-ocr'
 
+/**
+ * Rule-based verdict escalation using regulatory data.
+ * Overrides Gemini's verdict when definitive hazard signals are present.
+ *
+ * Escalation rules (in priority order):
+ * 1. IARC Group 1 (Carcinogenic to humans) → BANNED
+ * 2. banned_in countries → BANNED
+ * 3. IARC Group 2A (Probably carcinogenic) + high FDA events (>100) → AVOID
+ * 4. EFSA critical hazards (Carcinogenicity, Genotoxicity, Reprotoxicity) → AVOID
+ * 5. IARC Group 2B + EFSA hazard → CAUTION minimum
+ * 6. FDA events >100 → CAUTION minimum
+ * 7. Natural ingredients with no regulatory red flags → preserve Gemini verdict
+ */
+export function escalateVerdictFromRegulatoryData(
+  ingredientName: string,
+  geminiVerdict: string,
+  enrichedData: EnrichedIngredientData | null,
+  concerns: string[]
+): { verdict: string; concerns: string[]; autoEscalated: boolean } {
+  if (!enrichedData) {
+    return { verdict: geminiVerdict, concerns, autoEscalated: false }
+  }
+
+  const originalVerdict = geminiVerdict.toUpperCase()
+  let escalatedVerdict = originalVerdict
+  let autoEscalated = false
+  const newConcerns = [...concerns]
+
+  // Extract regulatory signals
+  const iarcGroup = enrichedData.iarc?.group || null
+  // EFSAData.hazard is a single string; wrap in array for uniform processing
+  const efsaHazard = enrichedData.efsa?.hazard || null
+  const efsaHazards: string[] = efsaHazard ? [efsaHazard] : []
+  const bannedCountries = enrichedData.banned_in || []
+  const fdaEvents = enrichedData.fda_reports || 0
+
+  // Critical EFSA hazards that warrant AVOID
+  const criticalEfsaHazards = ['Carcinogenicity', 'Genotoxicity', 'Reprotoxicity', 'Mutagenicity']
+  const hasCriticalEfsaHazard = efsaHazards.some((h: string) =>
+    criticalEfsaHazards.some(critical => h.includes(critical))
+  )
+
+  // Rule 1: IARC Group 1 → BANNED
+  if (iarcGroup === 'Group 1' && escalatedVerdict !== 'BANNED') {
+    escalatedVerdict = 'BANNED'
+    autoEscalated = true
+    newConcerns.push('WHO/IARC: Classified as carcinogenic to humans (Group 1)')
+    console.log(`[AutoEscalation] ${ingredientName}: ${originalVerdict} → BANNED (IARC Group 1)`)
+  }
+
+  // Rule 2: banned_in countries → BANNED
+  if (bannedCountries.length > 0 && escalatedVerdict !== 'BANNED') {
+    escalatedVerdict = 'BANNED'
+    autoEscalated = true
+    newConcerns.push(`Banned in: ${bannedCountries.join(', ')}`)
+    console.log(`[AutoEscalation] ${ingredientName}: ${originalVerdict} → BANNED (banned in ${bannedCountries.length} countries)`)
+  }
+
+  // Rule 3: IARC Group 2A + high FDA events → AVOID
+  if (iarcGroup === 'Group 2A' && fdaEvents > 100) {
+    const targetVerdict = 'AVOID'
+    if (escalatedVerdict === 'SAFE' || escalatedVerdict === 'CAUTION') {
+      escalatedVerdict = targetVerdict
+      autoEscalated = true
+      newConcerns.push(`WHO/IARC: Probably carcinogenic (Group 2A) + ${fdaEvents} FDA adverse events`)
+      console.log(`[AutoEscalation] ${ingredientName}: ${originalVerdict} → ${targetVerdict} (IARC 2A + FDA events)`)
+    }
+  }
+
+  // Rule 4: EFSA critical hazards → AVOID
+  if (hasCriticalEfsaHazard && escalatedVerdict !== 'BANNED') {
+    const targetVerdict = 'AVOID'
+    if (escalatedVerdict === 'SAFE' || escalatedVerdict === 'CAUTION') {
+      escalatedVerdict = targetVerdict
+      autoEscalated = true
+      const criticalFound = efsaHazards.filter((h: string) =>
+        criticalEfsaHazards.some(critical => h.includes(critical))
+      )
+      newConcerns.push(`EFSA: Critical hazards identified - ${criticalFound.join(', ')}`)
+      console.log(`[AutoEscalation] ${ingredientName}: ${originalVerdict} → ${targetVerdict} (EFSA critical hazards)`)
+    }
+  }
+
+  // Rule 5: IARC Group 2B + EFSA hazard → CAUTION minimum
+  if (iarcGroup === 'Group 2B' && efsaHazards.length > 0) {
+    const targetVerdict = 'CAUTION'
+    if (escalatedVerdict === 'SAFE') {
+      escalatedVerdict = targetVerdict
+      autoEscalated = true
+      newConcerns.push(`WHO/IARC: Possibly carcinogenic (Group 2B) + EFSA hazards: ${efsaHazards.slice(0, 2).join(', ')}`)
+      console.log(`[AutoEscalation] ${ingredientName}: ${originalVerdict} → ${targetVerdict} (IARC 2B + EFSA)`)
+    }
+  }
+
+  // Rule 6: High FDA events → CAUTION minimum
+  if (fdaEvents > 100 && escalatedVerdict === 'SAFE') {
+    escalatedVerdict = 'CAUTION'
+    autoEscalated = true
+    newConcerns.push(`FDA: ${fdaEvents} adverse event reports filed`)
+    console.log(`[AutoEscalation] ${ingredientName}: ${originalVerdict} → CAUTION (${fdaEvents} FDA events)`)
+  }
+
+  return {
+    verdict: escalatedVerdict,
+    concerns: newConcerns,
+    autoEscalated,
+  }
+}
+
 export async function processImageAndAnalyze(imageBuffer: Buffer, mimeType: string, language: string = 'English', clientOcrText: string = '') {
     // 1. Multi-source OCR: Gemini Vision + Workers AI in parallel (Tesseract already ran client-side)
     console.log('[Analysis] Starting multi-source OCR...')
@@ -143,11 +252,66 @@ export async function processImageAndAnalyze(imageBuffer: Buffer, mimeType: stri
         }
     }
 
-    // C. Call Gemini in ONE Batch with enriched context
+    // C. Pre-filter optimization: Skip Gemini for ingredients with hard regulatory signals
+    const preFilteredResults: Record<string, any> = {}
+    const stillNeedsGemini: string[] = []
+
+    for (const name of needsAnalysis) {
+        const enriched = enrichedData[name]
+        if (!enriched) {
+            stillNeedsGemini.push(name)
+            continue
+        }
+
+        // Hard signals that allow deterministic verdict without AI
+        const iarcGroup1 = enriched.iarc?.group === 'Group 1'
+        const isBanned = (enriched.banned_in || []).length > 0
+        const criticalEfsaHazards = ['Carcinogenicity', 'Genotoxicity', 'Reprotoxicity']
+        const efsaHazardStr = enriched.efsa?.hazard || ''
+        const hasCriticalEfsa = criticalEfsaHazards.some(critical => efsaHazardStr.includes(critical))
+
+        if (iarcGroup1 || isBanned || hasCriticalEfsa) {
+            // Generate deterministic verdict from regulatory data
+            const verdict = (iarcGroup1 || isBanned) ? 'BANNED' : 'AVOID'
+            const concerns: string[] = []
+
+            if (iarcGroup1) concerns.push('WHO/IARC: Carcinogenic to humans (Group 1)')
+            if (isBanned) concerns.push(`Banned in: ${enriched.banned_in!.join(', ')}`)
+            if (hasCriticalEfsa) {
+                concerns.push(`EFSA: ${efsaHazardStr}`)
+            }
+
+            preFilteredResults[name.toLowerCase()] = {
+                simple_name: `Regulatory-flagged substance`,
+                safety_verdict: verdict,
+                concerns,
+                banned_countries: enriched.banned_in || [],
+                sources_cited: ['WHO/IARC', 'EFSA', 'FDA'].filter(s =>
+                    (iarcGroup1 && s === 'WHO/IARC') ||
+                    (hasCriticalEfsa && s === 'EFSA') ||
+                    (isBanned && s === 'FDA')
+                ),
+                regulatory_status: {
+                    who_iarc: enriched.iarc?.group || 'Data not available',
+                    eu_efsa: hasCriticalEfsa ? 'Critical hazards identified' : 'Data not available',
+                },
+            }
+
+            console.log(`[PreFilter] Skipped Gemini for ${name} (hard signal: ${verdict})`)
+        } else {
+            stillNeedsGemini.push(name)
+        }
+    }
+
+    if (preFilteredResults && Object.keys(preFilteredResults).length > 0) {
+        console.log(`[PreFilter] Skipped ${Object.keys(preFilteredResults).length} ingredients (hard signals), calling Gemini for ${stillNeedsGemini.length}`)
+    }
+
+    // D. Call Gemini in ONE Batch with enriched context (only for ingredients without hard signals)
     let batchResults: Record<string, any> = {}
-    if (needsAnalysis.length > 0) {
-        console.log(`[Analysis] Batch analyzing ${needsAnalysis.length} new ingredients for ${productCategory} product...`)
-        const rawBatchResults = await analyzeIngredientBatch(needsAnalysis, productCategory, csvContext, externalApiContext)
+    if (stillNeedsGemini.length > 0) {
+        console.log(`[Analysis] Batch analyzing ${stillNeedsGemini.length} new ingredients for ${productCategory} product...`)
+        const rawBatchResults = await analyzeIngredientBatch(stillNeedsGemini, productCategory, csvContext, externalApiContext)
 
         // Build case-insensitive lookup: map lowercase key to first matching result
         for (const [key, value] of Object.entries(rawBatchResults)) {
@@ -158,7 +322,7 @@ export async function processImageAndAnalyze(imageBuffer: Buffer, mimeType: stri
         }
 
         // Fuzzy match: if Gemini returned slightly different key names, try to match them
-        for (const name of needsAnalysis) {
+        for (const name of stillNeedsGemini) {
             const lowerName = name.toLowerCase()
             if (lowerName in batchResults) continue
             // Try normalized match: strip trailing dots and extra whitespace
@@ -173,7 +337,10 @@ export async function processImageAndAnalyze(imageBuffer: Buffer, mimeType: stri
         }
     }
 
-    // D. Merge Results — use pre-fetched enriched data (no per-ingredient API calls)
+    // Merge pre-filtered results with Gemini batch results
+    batchResults = { ...preFilteredResults, ...batchResults }
+
+    // E. Merge Results — use pre-fetched enriched data (no per-ingredient API calls)
     for (const item of productData.ingredients) {
         const name = item.name
         const lowerName = name.toLowerCase()
@@ -210,9 +377,8 @@ export async function processImageAndAnalyze(imageBuffer: Buffer, mimeType: stri
             const geminiVerdict = safetyVerdict.toUpperCase()
 
             // FDA data is INFO-ONLY — added to concerns for transparency but
-            // NEVER changes the safety verdict. FDA recalls are mostly about
+            // NEVER directly changes the safety verdict. FDA recalls are mostly about
             // batch contamination or labeling errors, not ingredient safety.
-            // Only banned_countries (below) can escalate the verdict.
             if (officialData.fda_reports > 0) {
                 concerns.push(`FDA Adverse Events: ${officialData.fda_reports} reports filed.`)
             }
@@ -223,11 +389,19 @@ export async function processImageAndAnalyze(imageBuffer: Buffer, mimeType: stri
                  finalAnalysisData.chemical_formula = `${finalAnalysisData.chemical_formula || ''} (CAS: ${officialData.cas_number})`
             }
 
-            // Populate banned_in from enriched data regardless of Gemini's verdict
+            // Apply rule-based verdict escalation using regulatory data
+            const escalationResult = escalateVerdictFromRegulatoryData(
+                name,
+                geminiVerdict,
+                enrichedData[name] || null,
+                concerns
+            )
+
+            safetyVerdict = escalationResult.verdict
+            concerns = escalationResult.concerns
+
+            // Populate banned_in from enriched data
             const bannedCountries = Array.isArray(finalAnalysisData.banned_countries) ? finalAnalysisData.banned_countries : []
-            if (bannedCountries.length > 0 && safetyVerdict !== "BANNED") {
-                safetyVerdict = "BANNED"
-            }
 
             // Flat fields for DB storage
             let analysisToSave: any = {

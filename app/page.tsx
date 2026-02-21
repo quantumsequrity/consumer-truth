@@ -506,6 +506,11 @@ export default function Home() {
                                 <option value="Bengali">বাংলা</option>
                                 <option value="Marathi">मराठी</option>
                                 <option value="Gujarati">ગુજરાતી</option>
+                                <option value="Punjabi">ਪੰਜਾਬੀ</option>
+                                <option value="Malayalam">മലയാളം</option>
+                                <option value="Odia">ଓଡ଼ିଆ</option>
+                                <option value="Assamese">অসমীয়া</option>
+                                <option value="Urdu">اردو</option>
                             </select>
                         </div>
 
@@ -521,7 +526,7 @@ export default function Home() {
             </nav>
 
             {/* ====== MAIN CONTENT ====== */}
-            <div className="max-w-xl mx-auto px-4 pt-16 md:pt-24 pb-20">
+            <div className="max-w-xl mx-auto px-4 sm:px-6 pt-12 sm:pt-16 md:pt-24 pb-20">
 
                 {/* ====== HERO + INPUT ====== */}
                 {!analysisData && !voiceResponse && !comparisonData && !isAnalyzing && (

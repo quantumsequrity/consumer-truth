@@ -6,7 +6,7 @@ import {
     ShieldCheck, ShieldAlert, Info, ExternalLink, BookOpen,
     Copy, MessageCircle, Send, Loader2, Beaker, Pill,
     UtensilsCrossed, SprayCan, Droplets, FlaskConical, Ban,
-    ThumbsUp, ThumbsDown, Eye, TrendingUp
+    ThumbsUp, ThumbsDown, Eye, TrendingUp, Camera, Search
 } from 'lucide-react'
 
 /* ========================================
@@ -66,6 +66,8 @@ interface AnalysisResultProps {
         ingredients: Ingredient[]
         scanId?: string
         scannedCount?: number
+        isProductNameLookup?: boolean
+        nutrition?: any
     }
     language?: string
 }
@@ -160,6 +162,182 @@ function CategoryBadge({ category }: { category: string }) {
             <Icon size={12} />
             {cfg.label}
         </span>
+    )
+}
+
+/* ========================================
+   Nutrition Card
+   ======================================== */
+
+// Thresholds per 100g (UK/EU traffic light system)
+const HIGH_THRESHOLDS: Record<string, { amber: number; red: number }> = {
+    fat: { amber: 3, red: 17.5 },
+    saturated_fat: { amber: 1.5, red: 5 },
+    sugars: { amber: 5, red: 22.5 },
+    salt: { amber: 0.3, red: 1.5 },
+}
+const GOOD_THRESHOLDS: Record<string, number> = {
+    proteins: 5,
+    fiber: 3,
+}
+
+function getNutrientColor(key: string, value: number): string {
+    const high = HIGH_THRESHOLDS[key]
+    if (high) {
+        if (value >= high.red) return 'text-red-400'
+        if (value >= high.amber) return 'text-yellow-400'
+        return 'text-green-400'
+    }
+    const good = GOOD_THRESHOLDS[key]
+    if (good) {
+        return value >= good ? 'text-green-400' : 'text-gray-400'
+    }
+    return 'text-gray-300'
+}
+
+function getNutrientBg(key: string, value: number): string {
+    const high = HIGH_THRESHOLDS[key]
+    if (high) {
+        if (value >= high.red) return 'bg-red-500/8 border-red-500/15'
+        if (value >= high.amber) return 'bg-yellow-500/8 border-yellow-500/15'
+        return 'bg-green-500/8 border-green-500/15'
+    }
+    const good = GOOD_THRESHOLDS[key]
+    if (good) {
+        return value >= good ? 'bg-green-500/8 border-green-500/15' : 'bg-white/[0.03] border-white/5'
+    }
+    return 'bg-white/[0.03] border-white/5'
+}
+
+function NutritionCard({ nutrition, isHindi }: { nutrition: any; isHindi: boolean }) {
+    const nutriscoreGrade = (nutrition.nutriscore_grade || '').toUpperCase()
+    const novaGroup = nutrition.nova_group ? String(nutrition.nova_group) : null
+
+    const nutrients: { key: string; label: string; unit: string; field: string }[] = [
+        { key: 'energy', label: isHindi ? 'ऊर्जा' : 'Energy', unit: 'kcal', field: 'energy_kcal_100g' },
+        { key: 'fat', label: isHindi ? 'कुल वसा' : 'Total Fat', unit: 'g', field: 'fat_100g' },
+        { key: 'saturated_fat', label: isHindi ? 'संतृप्त वसा' : 'Saturated Fat', unit: 'g', field: 'saturated_fat_100g' },
+        { key: 'sugars', label: isHindi ? 'शक्कर' : 'Sugars', unit: 'g', field: 'sugars_100g' },
+        { key: 'proteins', label: isHindi ? 'प्रोटीन' : 'Protein', unit: 'g', field: 'proteins_100g' },
+        { key: 'salt', label: isHindi ? 'नमक' : 'Salt', unit: 'g', field: 'salt_100g' },
+        { key: 'fiber', label: isHindi ? 'फाइबर' : 'Fiber', unit: 'g', field: 'fiber_100g' },
+        { key: 'carbohydrates', label: isHindi ? 'कार्बोहाइड्रेट' : 'Carbohydrates', unit: 'g', field: 'carbohydrates_100g' },
+    ]
+
+    // Filter to only show nutrients that have data
+    const available = nutrients.filter(n => {
+        const val = parseFloat(nutrition[n.field])
+        return !isNaN(val) && val >= 0
+    })
+
+    if (available.length === 0 && !nutriscoreGrade && !novaGroup) return null
+
+    // Vitamins & minerals
+    const vitamins: { label: string; field: string }[] = [
+        { label: 'Vitamin A', field: 'vitamin_a_100g' },
+        { label: 'Vitamin C', field: 'vitamin_c_100g' },
+        { label: 'Vitamin D', field: 'vitamin_d_100g' },
+        { label: 'Vitamin B12', field: 'vitamin_b12_100g' },
+        { label: isHindi ? 'कैल्शियम' : 'Calcium', field: 'calcium_100g' },
+        { label: isHindi ? 'आयरन' : 'Iron', field: 'iron_100g' },
+        { label: isHindi ? 'पोटैशियम' : 'Potassium', field: 'potassium_100g' },
+        { label: isHindi ? 'जिंक' : 'Zinc', field: 'zinc_100g' },
+    ]
+    const availableVitamins = vitamins.filter(v => {
+        const val = parseFloat(nutrition[v.field])
+        return !isNaN(val) && val > 0
+    })
+
+    const nutriscoreColors: Record<string, string> = {
+        A: 'bg-green-600 text-white',
+        B: 'bg-lime-500 text-black',
+        C: 'bg-yellow-500 text-black',
+        D: 'bg-orange-500 text-white',
+        E: 'bg-red-600 text-white',
+    }
+
+    const novaLabels: Record<string, string> = {
+        '1': isHindi ? 'असंसाधित' : 'Unprocessed',
+        '2': isHindi ? 'संसाधित सामग्री' : 'Processed ingredients',
+        '3': isHindi ? 'संसाधित खाद्य' : 'Processed food',
+        '4': isHindi ? 'अति-संसाधित' : 'Ultra-processed',
+    }
+
+    return (
+        <div className="glass-card rounded-2xl overflow-hidden animate-fade-in-up">
+            <div className="p-5 sm:p-6">
+                <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-base font-semibold text-white flex items-center gap-2">
+                        <UtensilsCrossed size={18} className="text-orange-400 flex-shrink-0" />
+                        {isHindi ? 'पोषण जानकारी' : 'Nutrition Facts'}
+                        <span className="text-[10px] text-gray-600 font-normal uppercase">{isHindi ? 'प्रति 100g' : 'per 100g'}</span>
+                    </h3>
+
+                    {/* Nutri-Score + NOVA badges */}
+                    <div className="flex items-center gap-2">
+                        {nutriscoreGrade && nutriscoreColors[nutriscoreGrade] && (
+                            <span className={`px-2.5 py-1 rounded-lg text-xs font-bold ${nutriscoreColors[nutriscoreGrade]}`}>
+                                Nutri-Score {nutriscoreGrade}
+                            </span>
+                        )}
+                        {novaGroup && novaLabels[novaGroup] && (
+                            <span className={`px-2.5 py-1 rounded-lg text-xs font-bold border ${
+                                novaGroup === '4' ? 'bg-red-500/15 border-red-500/25 text-red-400' :
+                                novaGroup === '3' ? 'bg-yellow-500/15 border-yellow-500/25 text-yellow-400' :
+                                'bg-green-500/15 border-green-500/25 text-green-400'
+                            }`}>
+                                NOVA {novaGroup}
+                            </span>
+                        )}
+                    </div>
+                </div>
+
+                {/* Nutrient grid */}
+                {available.length > 0 && (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+                        {available.map(n => {
+                            const val = parseFloat(nutrition[n.field])
+                            return (
+                                <div key={n.key} className={`p-3 rounded-xl border transition-all ${getNutrientBg(n.key, val)}`}>
+                                    <p className="text-[10px] text-gray-500 uppercase tracking-wider font-bold mb-1">{n.label}</p>
+                                    <p className={`text-lg font-bold tabular-nums ${getNutrientColor(n.key, val)}`}>
+                                        {val % 1 === 0 ? val : val.toFixed(1)}
+                                        <span className="text-xs font-normal text-gray-600 ml-0.5">{n.unit}</span>
+                                    </p>
+                                </div>
+                            )
+                        })}
+                    </div>
+                )}
+
+                {/* Vitamins & minerals row */}
+                {availableVitamins.length > 0 && (
+                    <div>
+                        <p className="text-[10px] text-gray-600 uppercase tracking-wider font-bold mb-2">
+                            {isHindi ? 'विटामिन और खनिज' : 'Vitamins & Minerals'}
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                            {availableVitamins.map(v => {
+                                const val = parseFloat(nutrition[v.field])
+                                return (
+                                    <span key={v.field} className="px-2 py-1 text-xs rounded-lg bg-white/[0.04] border border-white/8 text-gray-400">
+                                        {v.label}: <span className="text-white font-medium">{val % 1 === 0 ? val : val.toFixed(2)}</span>
+                                    </span>
+                                )
+                            })}
+                        </div>
+                    </div>
+                )}
+
+                {/* NOVA explanation */}
+                {novaGroup && novaLabels[novaGroup] && (
+                    <p className="text-[10px] text-gray-600 mt-3">
+                        NOVA {novaGroup}: {novaLabels[novaGroup]}
+                        {novaGroup === '4' && (isHindi ? ' — इसमें कई संसाधित सामग्री हो सकती हैं' : ' — may contain many processed additives')}
+                    </p>
+                )}
+            </div>
+        </div>
     )
 }
 
@@ -560,6 +738,7 @@ export default function AnalysisResult({ data, language = 'English' }: AnalysisR
     const [expandedIngredients, setExpandedIngredients] = useState<Set<string>>(new Set())
     const [showShareModal, setShowShareModal] = useState(false)
     const [filterVerdict, setFilterVerdict] = useState<'all' | 'safe' | 'warning' | 'danger'>('all')
+    const [searchQuery, setSearchQuery] = useState('')
     const isHindi = language === 'Hindi'
 
     const product = data.product
@@ -613,9 +792,15 @@ export default function AnalysisResult({ data, language = 'English' }: AnalysisR
         `Analyzed on Sage Insight\n` +
         `Data: FDA, EU CosIng, WHO, BIS, FSSAI, EPA`
 
-    const filteredIngredients = filterVerdict === 'all'
-        ? ingredients
-        : ingredients.filter(i => getVerdict(i) === filterVerdict)
+    const filteredIngredients = ingredients.filter(i => {
+        if (filterVerdict !== 'all' && getVerdict(i) !== filterVerdict) return false
+        if (searchQuery) {
+            const q = searchQuery.toLowerCase()
+            return i.name.toLowerCase().includes(q) ||
+                (i.analysis.simple_name || '').toLowerCase().includes(q)
+        }
+        return true
+    })
 
     // Calculate bar widths for the summary
     const safePercent = totalCount > 0 ? (safeCount / totalCount) * 100 : 0
@@ -742,8 +927,11 @@ export default function AnalysisResult({ data, language = 'English' }: AnalysisR
                 </div>
             </div>
 
-            {/* ====== INGREDIENT LIST HEADER ====== */}
-            <div className="space-y-3">
+            {/* ====== NUTRITION CARD ====== */}
+            {data.nutrition && <NutritionCard nutrition={data.nutrition} isHindi={isHindi} />}
+
+            {/* ====== INGREDIENT LIST HEADER (sticky) ====== */}
+            <div className="sticky top-[53px] z-30 bg-[#09090b]/95 backdrop-blur-md -mx-4 px-4 py-3 space-y-3 border-b border-white/5">
                 <div className="flex items-center justify-between">
                     <h3 className="text-base sm:text-lg font-semibold text-white flex items-center gap-2">
                         <Info size={18} className="text-blue-400 flex-shrink-0" />
@@ -762,6 +950,20 @@ export default function AnalysisResult({ data, language = 'English' }: AnalysisR
                         }
                     </button>
                 </div>
+
+                {/* Search input — only show when 10+ ingredients */}
+                {totalCount >= 10 && (
+                    <div className="relative">
+                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" />
+                        <input
+                            type="text"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            placeholder={isHindi ? 'सामग्री खोजें...' : 'Search ingredients...'}
+                            className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-white/[0.04] border border-white/8 text-sm text-white placeholder-gray-600 focus:border-blue-500/40 transition-colors"
+                        />
+                    </div>
+                )}
 
                 {/* Filter buttons - horizontally scrollable on mobile */}
                 <div className="overflow-x-auto no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0">
@@ -1121,6 +1323,27 @@ export default function AnalysisResult({ data, language = 'English' }: AnalysisR
                     )
                 })}
             </div>
+
+            {/* ====== PHOTO NUDGE ====== */}
+            {data.isProductNameLookup && (
+                <div className="glass-card rounded-2xl p-4 sm:p-5 border border-blue-500/20 bg-blue-500/[0.04] animate-fade-in-up">
+                    <div className="flex items-start gap-3">
+                        <div className="w-9 h-9 rounded-xl bg-blue-500/15 flex items-center justify-center flex-shrink-0">
+                            <Camera size={18} className="text-blue-400" />
+                        </div>
+                        <div>
+                            <p className="text-sm font-semibold text-blue-300 mb-1">
+                                {isHindi ? 'अधिक सटीक विश्लेषण चाहिए?' : 'Want a more accurate analysis?'}
+                            </p>
+                            <p className="text-xs text-gray-400 leading-relaxed">
+                                {isHindi
+                                    ? 'इस रिपोर्ट में AI द्वारा अनुमानित सामग्री है। पैक के पीछे की सामग्री सूची की तस्वीर भेजें — सटीक परिणाम पाएं।'
+                                    : 'This report is based on AI-estimated ingredients. For exact results, send a photo of the ingredients list on the back of the pack.'}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* ====== FOLLOW-UP QUESTION ====== */}
             <FollowUpQuestion productName={product.product_name} language={language} scanId={data.scanId} />

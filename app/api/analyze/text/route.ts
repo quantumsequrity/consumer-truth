@@ -4,7 +4,8 @@ import { getEnrichedDataForBatch, formatEnrichedDataForPrompt, EnrichedIngredien
 import { query, execute, generateId, parseJsonColumn } from '@/lib/db'
 import { rateLimit, getClientIdentifier, sanitizeInput, validateLanguage, validateOrigin, getSecurityHeaders } from '@/lib/security'
 import { getCachedIngredient, cacheIngredient } from '@/lib/cache'
-import { lookupIngredientsContext, lookupProductContext } from '@/lib/product-data'
+import { lookupIngredientsContext, lookupProductContext, getFullProductDataByName } from '@/lib/product-data'
+import { escalateVerdictFromRegulatoryData } from '@/lib/analysis'
 
 export const maxDuration = 60
 
@@ -44,6 +45,7 @@ export async function POST(req: NextRequest) {
     let productName = 'Text Analysis'
     let productBrand = 'Manual Input'
     let productCategory = 'general'
+    let isProductNameLookup = false
 
     // Chemical/ingredient indicators - these should NOT be treated as product names
     const looksLikeIngredient = /\b(acid|sulfate|oxide|chloride|hydroxide|phosphate|carbonate|benzoate|salicylate|sodium|potassium|calcium|magnesium|zinc|iron|silica|glycol|methyl|ethyl|propyl|butyl|cetyl|stearyl|lauryl|laureth|dimethicone|paraben|sorbate|citrate|acetate|nitrate|amine|amide|aldehyde|ketone|ester|ether|phenol|benzyl|tocopherol|retinol|niacinamide|hyaluronic|ascorbic|tartrazine|aspartame|MSG|BHA|BHT|EDTA|SLS|SLES|PEG)\b/i.test(sanitized)
@@ -74,6 +76,7 @@ Rules:
             productName = parsed.product_name || sanitized
             productBrand = parsed.brand || 'Unknown'
             productCategory = parsed.category || 'general'
+            isProductNameLookup = true
           } else {
             return NextResponse.json({ error: `Could not find ingredients for "${sanitized}". Try sending a photo of the product label instead.` }, { status: 400, headers: getSecurityHeaders() })
           }
@@ -206,13 +209,13 @@ Rules:
           sources_checked: [],
         }
 
-        const concerns = analysisData.concerns || []
+        let concerns = analysisData.concerns || []
         let safetyVerdict = analysisData.safety_verdict || "CAUTION"
+        const geminiVerdict = safetyVerdict.toUpperCase()
 
         // FDA data is INFO-ONLY — added to concerns for transparency but
-        // NEVER changes the safety verdict. FDA recalls are mostly about
+        // NEVER directly changes the safety verdict. FDA recalls are mostly about
         // batch contamination or labeling errors, not ingredient safety.
-        // Only banned_countries (below) can escalate the verdict.
         if (officialData.fda_reports > 0) {
           concerns.push(`FDA Adverse Events: ${officialData.fda_reports} reports filed`)
         }
@@ -220,10 +223,18 @@ Rules:
           concerns.push(`FDA Recalls: ${officialData.fda_recalls.total_recalls} recall(s) found`)
         }
 
+        // Apply rule-based verdict escalation using regulatory data
+        const escalationResult = escalateVerdictFromRegulatoryData(
+          name,
+          geminiVerdict,
+          enrichedData[name] || null,
+          concerns
+        )
+
+        safetyVerdict = escalationResult.verdict
+        concerns = escalationResult.concerns
+
         const bannedCountries = Array.isArray(analysisData.banned_countries) ? analysisData.banned_countries : []
-        if (bannedCountries.length > 0 && safetyVerdict !== "BANNED") {
-          safetyVerdict = "BANNED"
-        }
 
         analysis = {
           name,
@@ -278,6 +289,21 @@ Rules:
       }
     }
 
+    // Fetch nutrition data (non-blocking — don't fail the request if unavailable)
+    let nutrition = null
+    try {
+      const fullData = await getFullProductDataByName(productName)
+      if (fullData?.nutrition) {
+        nutrition = {
+          ...fullData.nutrition,
+          nutriscore_grade: fullData.product?.nutriscore_grade || null,
+          nova_group: fullData.product?.nova_group || null,
+        }
+      }
+    } catch (e) {
+      console.warn('[TextAnalysis] Nutrition fetch failed (non-blocking):', e)
+    }
+
     // Log scan
     let scanId: string | undefined
     try {
@@ -300,6 +326,8 @@ Rules:
       },
       ingredients,
       scanId,
+      isProductNameLookup,
+      nutrition,
     }, { headers: getSecurityHeaders() })
   } catch (error: any) {
     console.error('Text analysis failed:', error)

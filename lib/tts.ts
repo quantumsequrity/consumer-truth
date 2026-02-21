@@ -86,8 +86,8 @@ export async function generateTTSAudio(
   try {
     const langCode = getLanguageCode(language)
 
-    // Limit total text to 1000 chars (roughly 5-6 chunks = ~15s audio)
-    const safeText = text.slice(0, 1000)
+    // Limit total text to 4000 chars (~20 chunks = ~60s audio)
+    const safeText = text.slice(0, 4000)
     const chunks = splitTextIntoChunks(safeText)
 
     console.log(`[TTS] Generating audio: ${chunks.length} chunk(s), lang=${langCode}`)

@@ -187,7 +187,7 @@ export function validateImageFile(file: File): { valid: boolean; error?: string 
 
 // Validate language parameter
 export function validateLanguage(lang: string): string {
-  const allowedLanguages = ['English', 'Hindi', 'Tamil', 'Kannada', 'Telugu', 'Bengali', 'Marathi', 'Gujarati']
+  const allowedLanguages = ['English', 'Hindi', 'Tamil', 'Kannada', 'Telugu', 'Bengali', 'Marathi', 'Gujarati', 'Punjabi', 'Malayalam', 'Odia', 'Assamese', 'Urdu']
   const sanitized = sanitizeInput(lang)
 
   if (allowedLanguages.includes(sanitized)) {

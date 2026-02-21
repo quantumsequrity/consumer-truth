@@ -23,18 +23,27 @@ export const maxDuration = 60
 const limiter = rateLimit({ windowMs: 60000, maxRequests: 10 })
 
 // Helper: send audio reply in background (non-blocking)
+// Splits long text into multiple audio clips (max 4000 chars each)
 function sendAudioInBackground(from: string, text: string, language: string, hashedFrom: string) {
-    const work = generateTTSAudio(text, language)
-        .then(async (audioId) => {
-            if (!audioId) return
-            const audioUrl = getAudioUrl(audioId)
-            if (!audioUrl) return
-            await sendWhatsAppAudio(from, audioUrl)
-            console.log(`[WhatsApp] Audio sent to ${hashedFrom}`)
-        })
-        .catch((err) => {
-            console.error('[WhatsApp] Audio send failed (non-blocking):', err)
-        })
+    const MAX_CLIP = 4000
+    const clips = text.length <= MAX_CLIP
+        ? [text]
+        : [text.slice(0, MAX_CLIP), text.slice(MAX_CLIP, MAX_CLIP * 2)]
+
+    const work = (async () => {
+        for (const clip of clips) {
+            try {
+                const audioId = await generateTTSAudio(clip, language)
+                if (!audioId) continue
+                const audioUrl = getAudioUrl(audioId)
+                if (!audioUrl) continue
+                await sendWhatsAppAudio(from, audioUrl)
+                console.log(`[WhatsApp] Audio clip sent to ${hashedFrom}`)
+            } catch (err) {
+                console.error('[WhatsApp] Audio send failed (non-blocking):', err)
+            }
+        }
+    })()
 
     // Keep the worker alive until audio is sent (prevents cold-shutdown kill)
     const waitUntil = getWaitUntil()

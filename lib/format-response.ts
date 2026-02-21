@@ -32,6 +32,7 @@ interface AnalysisResult {
 interface FormatOptions {
   maxChars?: number // Default 4096 (WhatsApp limit)
   showHowItsMade?: boolean // Only for single-ingredient deep-dive
+  isProductNameLookup?: boolean // Show photo nudge when ingredients are AI-estimated
 }
 
 interface FormattedReport {
@@ -43,7 +44,7 @@ interface FormattedReport {
 }
 
 export function formatIngredientReport(result: AnalysisResult, options: FormatOptions = {}): FormattedReport {
-  const { maxChars = 4096, showHowItsMade = false } = options
+  const { maxChars = 4096, showHowItsMade = false, isProductNameLookup = false } = options
   const product = result.productData
 
   let safeCount = 0
@@ -112,16 +113,39 @@ export function formatIngredientReport(result: AnalysisResult, options: FormatOp
   responseText += `*Summary* (${result.ingredients.length} total):\n`
   responseText += `Safe: ${safeCount} | Caution: ${cautionCount} | Avoid: ${avoidCount}\n\n`
   responseText += `Reply with an ingredient name for more details.\n`
+  if (isProductNameLookup) {
+    responseText += `\n_Note: These are AI-estimated ingredients. For exact results, send a photo of the ingredients list on the back of the pack._\n`
+  }
   responseText += `\n_Disclaimer: Educational info only. Sources: FDA/EU/WHO/BIS/FSSAI/PubChem. Consult a professional for health advice._`
 
-  // Build voice summary
+  // Build voice summary — richer version with per-ingredient details
   const safetyScore = result.ingredients.length > 0
     ? Math.round((safeCount / Math.max(result.ingredients.length, 1)) * 10)
     : 0
   const concernsList = topConcerns.length > 0
     ? `Top concerns: ${topConcerns.join(', ')}.`
     : 'No major concerns found.'
-  const voiceSummary = `${product.product_name}. Safety score: ${safetyScore} out of 10. Found ${result.ingredients.length} ingredients. ${safeCount} safe, ${cautionCount} caution, ${avoidCount} avoid. ${concernsList}`
+
+  let voiceSummary = `${product.product_name}. Safety score: ${safetyScore} out of 10. Found ${result.ingredients.length} ingredients. ${safeCount} safe, ${cautionCount} caution, ${avoidCount} avoid. ${concernsList}`
+
+  // Add per-ingredient details for non-safe ingredients (up to ~3000 chars total)
+  const flaggedIngredients = result.ingredients.filter(item => {
+    const v = getVerdict(item)
+    return v === 'BANNED' || v === 'AVOID' || v === 'CAUTION'
+  })
+  if (flaggedIngredients.length > 0) {
+    voiceSummary += ' Here are the details.'
+    for (const item of flaggedIngredients) {
+      if (voiceSummary.length > 3200) break
+      const v = getVerdict(item)
+      const simpleName = item.analysis.simple_name ? `, also known as ${item.analysis.simple_name}` : ''
+      const concerns = item.analysis.concerns?.filter(c => c !== 'None' && c !== 'No concerns')?.slice(0, 2) || []
+      const concernText = concerns.length > 0 ? ` Concerns: ${concerns.join('. ')}.` : ''
+      const bannedIn = item.analysis.banned_in || item.analysis.banned_countries || []
+      const bannedText = bannedIn.length > 0 ? ` Banned in ${bannedIn.slice(0, 3).join(', ')}.` : ''
+      voiceSummary += ` ${item.name}${simpleName}. Verdict: ${v.toLowerCase()}.${concernText}${bannedText}`
+    }
+  }
 
   return { responseText, voiceSummary, safeCount, cautionCount, avoidCount }
 }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { processImageAndAnalyze } from '@/lib/analysis'
+import { getFullProductDataByName } from '@/lib/product-data'
 import { execute, generateId } from '@/lib/db'
 import { rateLimit, getClientIdentifier, validateImageFile, validateFileSignature, validateLanguage, validateOrigin, getSecurityHeaders } from '@/lib/security'
 
@@ -84,6 +85,24 @@ export async function POST(req: NextRequest) {
         // Process and analyze (pass client OCR text for multi-source merge)
         const result = await processImageAndAnalyze(buffer, mimeType, language, clientOcrText)
 
+        // Fetch nutrition data (non-blocking)
+        let nutrition = null
+        try {
+            const productName = result.productData?.product_name
+            if (productName) {
+                const fullData = await getFullProductDataByName(productName)
+                if (fullData?.nutrition) {
+                    nutrition = {
+                        ...fullData.nutrition,
+                        nutriscore_grade: fullData.product?.nutriscore_grade || null,
+                        nova_group: fullData.product?.nova_group || null,
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('[ImageAnalysis] Nutrition fetch failed (non-blocking):', e)
+        }
+
         // Log scan (non-blocking)
         let scanId: string | undefined
         try {
@@ -103,6 +122,7 @@ export async function POST(req: NextRequest) {
             scanId,
             scannedCount: result.scannedCount,
             ocrSources: result.ocrSources,
+            nutrition,
         }, { headers: getSecurityHeaders() })
     } catch (error: any) {
         console.error('Analysis failed:', error)
