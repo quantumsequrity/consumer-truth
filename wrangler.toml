@@ -43,6 +43,9 @@ binding = "AI"
 NODE_ENV = "production"
 WHATSAPP_PHONE_NUMBER_ID = "your_phone_number_id"
 NEXT_PUBLIC_APP_URL = "https://sage-insight.cloudsequrity.com"
+USE_GROUNDED_RENDERER = "true"
+RENDERER_BACKEND = "gemma"
+RENDERER_MODEL = "@cf/google/gemma-4-26b-a4b-it"
 
 [[custom_domains]]
 hostname = "sage-insight.cloudsequrity.com"

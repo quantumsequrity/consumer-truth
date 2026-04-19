@@ -16,13 +16,14 @@ async function getSharp(): Promise<any> {
   return sharp
 }
 
+// Key is read lazily: at build time it may be absent (secret lives in
+// Cloudflare Secrets, not the build env); at runtime on Workers it is
+// populated. Module import must never throw, or `next build` page-data
+// collection fails even though runtime would be fine.
 const apiKey = process.env.GEMINI_API_KEY
 
 if (!apiKey) {
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('GEMINI_API_KEY is required in production')
-  }
-  console.warn('Missing Gemini API Key - API calls will fail')
+  console.warn('GEMINI_API_KEY not set at module load; Gemini calls will throw at first use.')
 }
 
 const genAI = new GoogleGenerativeAI(apiKey || '')
@@ -82,6 +83,9 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 const GEMINI_TIMEOUT_MS = 30000
 
 export async function callGeminiWithRetry(geminiModel: any, prompt: any, retries = 3, delay = 2000): Promise<any> {
+  if (!process.env.GEMINI_API_KEY) {
+    throw new Error('GEMINI_API_KEY is required for Gemini API calls')
+  }
   for (let i = 0; i < retries; i++) {
     try {
       const result = await withTimeout(geminiModel.generateContent(prompt), GEMINI_TIMEOUT_MS)

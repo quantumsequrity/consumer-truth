@@ -6,6 +6,7 @@ import { rateLimit, getClientIdentifier, sanitizeInput, validateLanguage, valida
 import { getCachedIngredient, cacheIngredient } from '@/lib/cache'
 import { lookupIngredientsContext, lookupProductContext, getFullProductDataByName } from '@/lib/product-data'
 import { escalateVerdictFromRegulatoryData } from '@/lib/analysis'
+import { tryGroundedAsLegacyShape, groundedEnabled } from '@/lib/analysis-grounded'
 
 export const maxDuration = 60
 
@@ -111,7 +112,7 @@ Rules:
     // Check cache for already-analyzed ingredients
     const cachedResults: Record<string, any> = {}
     const needsDbLookup: string[] = []
-    const needsAnalysis: string[] = []
+    let needsAnalysis: string[] = []
 
     for (const name of ingredientNames) {
       const cached = getCachedIngredient(name)
@@ -141,6 +142,30 @@ Rules:
         } else {
           needsAnalysis.push(name)
         }
+      }
+    }
+
+    // v2-grounded pre-filter: when the flag is on and the ingredient has facts
+    // in the CIG, use the deterministic renderer (Workers AI Gemma by default)
+    // and skip Gemini for that ingredient. Safe fallback: unknown ingredients
+    // pass through to the normal CSV + enriched + Gemini path.
+    if (groundedEnabled() && needsAnalysis.length > 0) {
+      const groundedHits: string[] = []
+      await Promise.all(needsAnalysis.map(async (name) => {
+        try {
+          const grounded = await tryGroundedAsLegacyShape(name, language)
+          if (grounded) {
+            cachedResults[name] = grounded
+            groundedHits.push(name)
+          }
+        } catch (e) {
+          console.warn(`[Grounded] Lookup failed for ${name}:`, (e as Error).message)
+        }
+      }))
+      if (groundedHits.length > 0) {
+        console.log(`[Grounded] Resolved ${groundedHits.length}/${needsAnalysis.length} ingredients from CIG`)
+        const hits = new Set(groundedHits.map(n => n.toLowerCase()))
+        needsAnalysis = needsAnalysis.filter(n => !hits.has(n.toLowerCase()))
       }
     }
 

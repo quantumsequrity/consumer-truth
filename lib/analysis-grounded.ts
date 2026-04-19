@@ -48,8 +48,22 @@ function getRegulatoryDb(): D1Database | null {
   }
 }
 
-function groundedEnabled(): boolean {
-  return process.env.USE_GROUNDED_RENDERER === 'true'
+function cfVar(name: string): string | undefined {
+  // On Workers the wrangler [vars] block and secrets live on the Cloudflare
+  // env binding, not always on Node's process.env. Read both and prefer the
+  // binding when present.
+  try {
+    const { getCloudflareContext } = require('@opennextjs/cloudflare')
+    const { env } = getCloudflareContext()
+    if (env && typeof env[name] === 'string') return env[name] as string
+  } catch {
+    // Cloudflare context not available (local dev / build-time) — fall through.
+  }
+  return process.env[name]
+}
+
+export function groundedEnabled(): boolean {
+  return cfVar('USE_GROUNDED_RENDERER') === 'true'
 }
 
 function normalizeAliasClientSide(s: string): string {

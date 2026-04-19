@@ -13,6 +13,11 @@
  */
 
 import { callGeminiWithRetry, modelDeterministic } from './gemini'
+import {
+  callWorkersAIRenderer,
+  isWorkersAIRendererEnabled,
+  workersAIRendererAvailable,
+} from './workers-ai-renderer'
 
 // ----- Data shapes -----
 
@@ -304,14 +309,29 @@ export async function renderGroundedFacts(
 
   let rendered: { simple_name?: string; how_its_made?: string | null; safety_summary?: string } = {}
 
+  const preferGemma = isWorkersAIRendererEnabled() && workersAIRendererAvailable()
+
   try {
-    const result = await callGeminiWithRetry(modelDeterministic, prompt)
-    const response = await result.response
-    const text = response.text()
-    const json = text.replace(/```json/g, '').replace(/```/g, '').trim()
+    let rawText: string | null = null
+
+    if (preferGemma) {
+      rawText = await callWorkersAIRenderer(prompt)
+      if (!rawText) {
+        console.warn(`[Renderer] Gemma returned empty for ${facts.primary_name}; falling back to Gemini`)
+      }
+    }
+
+    if (!rawText) {
+      const result = await callGeminiWithRetry(modelDeterministic, prompt)
+      const response = await result.response
+      rawText = response.text()
+    }
+
+    const json = (rawText ?? '').replace(/```json/g, '').replace(/```/g, '').trim()
     rendered = JSON.parse(json)
   } catch (err) {
-    console.error(`[Renderer] Gemini call failed for ${facts.primary_name}:`, (err as Error).message)
+    const backend = preferGemma ? 'Gemma+Gemini' : 'Gemini'
+    console.error(`[Renderer] ${backend} call failed for ${facts.primary_name}:`, (err as Error).message)
     // Fallback: render deterministically without LLM prose
     rendered = {
       simple_name: facts.primary_name,

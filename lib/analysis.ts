@@ -4,7 +4,7 @@ import { getEnrichedDataForBatch, formatEnrichedDataForPrompt, EnrichedIngredien
 import { lookupIngredientsContext, lookupProductContext } from './product-data'
 import { mergeOcrResults } from './ocr-merge'
 import { extractWithWorkersAI } from './workers-ai-ocr'
-import { tryGroundedAsLegacyShape } from './analysis-grounded'
+import { tryGroundedAsLegacyShape, groundedEnabled } from './analysis-grounded'
 
 /**
  * Rule-based verdict escalation using regulatory data.
@@ -262,7 +262,7 @@ export async function processImageAndAnalyze(imageBuffer: Buffer, mimeType: stri
     // Gemini for that ingredient. Falls through gracefully when the flag is
     // off, the DB binding is missing, or the ingredient is not indexed.
     const groundedHits = new Set<string>()
-    if (process.env.USE_GROUNDED_RENDERER === 'true' && needsAnalysis.length > 0) {
+    if (groundedEnabled() && needsAnalysis.length > 0) {
         await Promise.all(needsAnalysis.map(async (name) => {
             try {
                 const grounded = await tryGroundedAsLegacyShape(name, language)
