@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next'
-import { Inter } from 'next/font/google'
+import { Inter, Fraunces } from 'next/font/google'
 import './globals.css'
 
 const inter = Inter({
@@ -8,14 +8,21 @@ const inter = Inter({
     variable: '--font-inter',
 })
 
+const fraunces = Fraunces({
+    subsets: ['latin'],
+    display: 'swap',
+    variable: '--font-fraunces',
+    axes: ['opsz'],
+})
+
 export const metadata: Metadata = {
-    title: 'Sage Insight - Know What You Consume',
-    description: 'AI-powered ingredient analysis against FDA, EU, WHO & BIS/FSSAI safety standards. Instant safety reports for food, cosmetics, household products & more.',
-    keywords: ['ingredient analysis', 'food safety', 'cosmetic safety', 'FDA', 'FSSAI', 'consumer safety', 'product ingredients'],
-    authors: [{ name: 'Sage Insight' }],
+    title: 'Alzhal — What is actually in it?',
+    description: 'Scan a product label. Get a grounded safety read backed by FDA, EU, WHO, FSSAI, and IARC — not AI guesses. Photo, text, or voice.',
+    keywords: ['ingredient analysis', 'label scanner', 'food safety', 'cosmetic safety', 'FDA', 'FSSAI', 'IARC', 'product ingredients'],
+    authors: [{ name: 'Alzhal' }],
     openGraph: {
-        title: 'Sage Insight - Know What You Consume',
-        description: 'Instant AI analysis of product ingredients against global safety standards.',
+        title: 'Alzhal — What is actually in it?',
+        description: 'A grounded ingredient read against real regulators. No wellness guesswork.',
         type: 'website',
     },
 }
@@ -24,7 +31,7 @@ export const viewport: Viewport = {
     width: 'device-width',
     initialScale: 1,
     maximumScale: 1,
-    themeColor: '#050508',
+    themeColor: '#FAF9F5',
 }
 
 export default function RootLayout({
@@ -33,8 +40,8 @@ export default function RootLayout({
     children: React.ReactNode
 }) {
     return (
-        <html lang="en" className={`${inter.variable} dark`}>
-            <body className={`${inter.className} noise-overlay`}>{children}</body>
+        <html lang="en" className={`${inter.variable} ${fraunces.variable}`}>
+            <body className={inter.className}>{children}</body>
         </html>
     )
 }

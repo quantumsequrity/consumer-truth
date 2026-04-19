@@ -198,7 +198,7 @@ function TutorialModal({ language, onClose }: { language: string; onClose: () =>
             title: isHindi ? 'नमस्ते!' : 'Welcome!',
             description: isHindi
                 ? 'यह ऐप आपको बताता है कि आपके खाने-पीने की चीज़ों में क्या है - सुरक्षित है या नहीं।'
-                : 'Sage Insight tells you exactly what is in your food, cosmetics, and household products - and whether it is safe.',
+                : 'Alzhal tells you exactly what is in your food, cosmetics, and household products — and whether it is safe, grounded in real regulators (FDA, EU, WHO, FSSAI, IARC).',
             icon: Shield,
         },
         {
@@ -486,8 +486,8 @@ export default function Home() {
             {/* ====== NAVBAR ====== */}
             <nav className="sticky top-0 z-50 w-full bg-[#09090b]/80 backdrop-blur-md border-b border-zinc-800/50">
                 <div className="max-w-3xl mx-auto px-4 py-3 flex justify-between items-center">
-                    <span className="font-semibold text-sm tracking-tight text-white">
-                        {isHindi ? 'सेज इनसाइट' : 'Sage Insight'}
+                    <span className="font-display text-base tracking-tight text-[var(--text-primary)]" style={{ fontWeight: 500 }}>
+                        Alzhal
                     </span>
 
                     <div className="flex items-center gap-2">
