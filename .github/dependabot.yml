@@ -1,0 +1,44 @@
+version: 2
+
+updates:
+  # npm dependencies
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '07:00'
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 5
+    groups:
+      # One bundled PR for non-breaking weekly bumps; security advisories
+      # always get their own PR regardless of grouping.
+      patch-and-minor:
+        update-types:
+          - patch
+          - minor
+    ignore:
+      # Pin esbuild via the existing `overrides` in package.json; let
+      # dependabot focus on direct deps.
+      - dependency-name: esbuild
+    labels:
+      - dependencies
+    commit-message:
+      prefix: deps
+      include: scope
+
+  # GitHub Actions used in .github/workflows/
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '07:00'
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: ci
+      include: scope

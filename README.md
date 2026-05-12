@@ -10,6 +10,7 @@ No AI guessing. Every safety claim links back to a specific regulation.
 - **12 additional languages** are exposed in the language picker: Hindi, Tamil, Telugu, Kannada, Bengali, Marathi, Gujarati, Punjabi, Malayalam, Odia, Assamese, Urdu.
 - These 12 additional languages are handled uniformly as a group: when a user selects one, the dynamic content (ingredient explanations, voice replies, follow-up answers) is translated at runtime by the AI layer. Static UI labels stay in English regardless — see the translation policy in `CONTRIBUTING.md` for why we do not hardcode unverified translations.
 
+[![CI](https://github.com/quantumsequrity/alzhal/actions/workflows/ci.yml/badge.svg)](https://github.com/quantumsequrity/alzhal/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache_2.0-blue.svg)](LICENSE)
 [![Built on Cloudflare Workers](https://img.shields.io/badge/runs%20on-Cloudflare%20Workers-orange)](https://workers.cloudflare.com)
 [![Next.js 16](https://img.shields.io/badge/Next.js-16-black)](https://nextjs.org)

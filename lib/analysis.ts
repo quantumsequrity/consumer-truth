@@ -430,7 +430,7 @@ export async function processImageAndAnalyze(imageBuffer: Buffer, mimeType: stri
             const bannedCountries = Array.isArray(finalAnalysisData.banned_countries) ? finalAnalysisData.banned_countries : []
 
             // Flat fields for DB storage
-            let analysisToSave: any = {
+            const analysisToSave: any = {
                 name,
                 analyzed_count: 1,
                 simple_name: finalAnalysisData.simple_name || "Analysis unavailable",

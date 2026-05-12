@@ -93,7 +93,7 @@ async function main() {
 
   let hits = 0
   let misses = 0
-  let errors = 0
+  const errors = 0
   let sqlBatch: IngredientRow[] = []
 
   function flushSqlBatch() {

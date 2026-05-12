@@ -173,7 +173,7 @@ CREATE INDEX IF NOT EXISTS idx_food_products_name ON food_products(product_name)
   let lineNum = 0
   let headers: string[] = []
   let separator = '\t'
-  let columnMap: { srcIndex: number; destColumn: string }[] = []
+  const columnMap: { srcIndex: number; destColumn: string }[] = []
   let batch: string[][] = [] // each entry is an array of escaped values
   let totalWritten = 0
   let skipped = 0

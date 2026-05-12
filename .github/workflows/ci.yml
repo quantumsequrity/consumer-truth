@@ -12,18 +12,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  typecheck:
-    name: Typecheck
+  verify:
+    name: Typecheck, lint, build
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version-file: '.nvmrc'
           cache: 'npm'
 
       - name: Install dependencies
@@ -32,6 +32,13 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-  # Lint is intentionally not wired up yet. Next.js 16 removed `next lint`
-  # and the project has no standalone eslint config. Add `eslint.config.mjs`
-  # and a working `lint` script before adding a lint job here.
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+        env:
+          # Build runs without Cloudflare bindings. The build is allowed to
+          # complete with secrets absent; runtime callers throw if they need
+          # a missing key. Placeholder kept for clarity.
+          NEXT_TELEMETRY_DISABLED: '1'

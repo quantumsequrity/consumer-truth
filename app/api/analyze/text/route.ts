@@ -204,7 +204,7 @@ Rules:
     }
 
     // Batch analyze missing ingredients with enriched context
-    let batchResults: Record<string, any> = {}
+    const batchResults: Record<string, any> = {}
     if (needsAnalysis.length > 0) {
       const rawBatch = await analyzeIngredientBatch(needsAnalysis, productCategory, csvContext, externalApiContext)
       for (const [key, value] of Object.entries(rawBatch)) {

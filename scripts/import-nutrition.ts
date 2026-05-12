@@ -171,7 +171,7 @@ CREATE INDEX IF NOT EXISTS idx_nutrition_code ON food_nutrition(code);
   let lineNum = 0
   let headers: string[] = []
   let separator = '\t'
-  let columnMapping: { srcIndex: number; destColumn: string }[] = []
+  const columnMapping: { srcIndex: number; destColumn: string }[] = []
   let batch: string[][] = []
   let totalWritten = 0
   let skipped = 0

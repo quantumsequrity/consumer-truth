@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
             )
         }
 
-        let buffer: Buffer = Buffer.from(await file.arrayBuffer()) as Buffer
+        const buffer: Buffer = Buffer.from(await file.arrayBuffer()) as Buffer
         let mimeType = file.type
 
         // Detect MIME type from extension if browser sends generic type
