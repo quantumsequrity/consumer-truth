@@ -1,3 +1,5 @@
+import crypto from 'crypto'
+
 const botToken = process.env.TELEGRAM_BOT_TOKEN
 
 if (!botToken) {
@@ -14,6 +16,50 @@ if (!botToken) {
 export type TelegramResult = { success: true; data: any } | { success: false; error: string }
 
 const TELEGRAM_API = `https://api.telegram.org/bot${botToken}`
+
+/**
+ * Verify the X-Telegram-Bot-Api-Secret-Token header on incoming webhooks.
+ *
+ * Telegram echoes back whatever `secret_token` was passed to setWebhook. We
+ * compare it timing-safely to TELEGRAM_WEBHOOK_SECRET. Without this check
+ * anyone who knows the webhook URL can forge updates pretending to be any
+ * user, bypassing the per-user rate limit.
+ *
+ * Dev fallback: if no secret is configured AND we are not in production, the
+ * check is skipped with a warning. In production a missing secret is a hard
+ * fail so the webhook cannot accidentally ship unguarded.
+ */
+export function verifyTelegramWebhookSecret(headerValue: string | null): boolean {
+    const expected = process.env.TELEGRAM_WEBHOOK_SECRET
+
+    if (!expected) {
+        if (process.env.NODE_ENV === 'production') {
+            console.error('[Telegram] TELEGRAM_WEBHOOK_SECRET not set in production — rejecting')
+            return false
+        }
+        console.warn('[Telegram] TELEGRAM_WEBHOOK_SECRET not set — skipping check (dev only)')
+        return true
+    }
+
+    if (!headerValue) {
+        console.warn('[Telegram] Missing X-Telegram-Bot-Api-Secret-Token header')
+        return false
+    }
+
+    // Telegram secret tokens are 1–256 chars of A-Z, a-z, 0-9, _, -.
+    // Equal-length precondition for timingSafeEqual.
+    if (headerValue.length !== expected.length) {
+        return false
+    }
+
+    try {
+        const a = Buffer.from(headerValue)
+        const b = Buffer.from(expected)
+        return crypto.timingSafeEqual(a, b)
+    } catch {
+        return false
+    }
+}
 
 /**
  * Make a Telegram Bot API call.
@@ -177,8 +223,16 @@ export async function downloadTelegramFile(fileId: string): Promise<{ buffer: Bu
 
 /**
  * Set the webhook URL for the Telegram bot.
- * Call this once to register your webhook endpoint.
+ *
+ * Registers the TELEGRAM_WEBHOOK_SECRET so Telegram echoes it back on every
+ * update via the X-Telegram-Bot-Api-Secret-Token header. The webhook handler
+ * uses that to reject forged requests.
  */
 export async function setWebhook(url: string): Promise<TelegramResult> {
-    return telegramApiCall('setWebhook', { url })
+    const payload: Record<string, string> = { url }
+    const secret = process.env.TELEGRAM_WEBHOOK_SECRET
+    if (secret) {
+        payload.secret_token = secret
+    }
+    return telegramApiCall('setWebhook', payload)
 }

@@ -347,18 +347,35 @@ export async function processImageAndAnalyze(imageBuffer: Buffer, mimeType: stri
             }
         }
 
-        // Fuzzy match: if Gemini returned slightly different key names, try to match them
+        // Match Gemini's returned keys against the requested names.
+        //
+        // Gemini occasionally returns keys with cosmetic differences (trailing
+        // punctuation, doubled whitespace, mixed case). We tolerate those.
+        //
+        // We do NOT tolerate substring overlap: "Salt" and "Sea Salt" are
+        // different ingredients, and matching one to the other's analysis
+        // text would silently mislabel safety. The previous code did exactly
+        // that via `includes()` checks — fixed here to require a normalized
+        // exact match only.
+        const normalizeKey = (s: string) =>
+            s.toLowerCase().replace(/[.,;:!?]+$/g, '').replace(/\s+/g, ' ').trim()
+
+        const normalizedBatchIndex = new Map<string, string>()
+        for (const batchKey of Object.keys(batchResults)) {
+            const norm = normalizeKey(batchKey)
+            if (!normalizedBatchIndex.has(norm)) {
+                normalizedBatchIndex.set(norm, batchKey)
+            }
+        }
+
         for (const name of stillNeedsGemini) {
             const lowerName = name.toLowerCase()
             if (lowerName in batchResults) continue
-            // Try normalized match: strip trailing dots and extra whitespace
-            const normalizedName = lowerName.replace(/\.$/, '').trim()
-            for (const batchKey of Object.keys(batchResults)) {
-                const normalizedKey = batchKey.replace(/\.$/, '').trim()
-                if (normalizedKey === normalizedName || batchKey.includes(lowerName) || lowerName.includes(batchKey) || normalizedKey.includes(normalizedName) || normalizedName.includes(normalizedKey)) {
-                    batchResults[lowerName] = batchResults[batchKey]
-                    break
-                }
+
+            const normalizedName = normalizeKey(name)
+            const hit = normalizedBatchIndex.get(normalizedName)
+            if (hit && hit !== lowerName) {
+                batchResults[lowerName] = batchResults[hit]
             }
         }
     }

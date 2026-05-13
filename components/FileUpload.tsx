@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useCallback } from 'react'
-import { Upload, Loader2 } from 'lucide-react'
+import { Upload, Loader2, Camera, Lightbulb } from 'lucide-react'
 
 interface FileUploadProps {
     onFileSelect: (file: File, ocrText: string) => void
@@ -14,6 +14,7 @@ export default function FileUpload({ onFileSelect, isUploading, language = 'Engl
     const [preview, setPreview] = useState<string | null>(null)
     const [fileName, setFileName] = useState<string | null>(null)
     const inputRef = useRef<HTMLInputElement>(null)
+    const cameraInputRef = useRef<HTMLInputElement>(null)
 
     const handleDrag = useCallback((e: React.DragEvent) => {
         e.preventDefault()
@@ -135,18 +136,31 @@ export default function FileUpload({ onFileSelect, isUploading, language = 'Engl
                     accept="image/png, image/jpeg, image/jpg, image/webp, image/avif, image/heic, image/heif, .avif, .heic"
                     onChange={handleChange}
                 />
+                {/* Separate camera-only input: with the `capture` attribute set,
+                    mobile browsers (iOS Safari, Android Chrome) open the camera
+                    directly instead of the gallery picker. The plain input above
+                    stays for desktop drag/drop and for users who want to pick
+                    from gallery / files. */}
+                <input
+                    ref={cameraInputRef}
+                    type="file"
+                    className="hidden"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handleChange}
+                />
 
                 <div className={`p-5 sm:p-6 flex flex-col items-center justify-center text-center ${isUploading ? 'pointer-events-none' : ''}`}>
                     {isUploading ? (
-                        <Loader2 className="w-8 h-8 text-green-500 animate-spin mb-4" />
+                        <Loader2 className="w-8 h-8 text-green-500 animate-spin mb-4" aria-hidden />
                     ) : preview ? (
                         <img
                             src={preview}
-                            alt="Preview"
+                            alt={fileName ? `Preview of ${fileName}` : 'Preview of selected image'}
                             className="w-16 h-16 object-cover rounded-lg border border-zinc-700 mb-4"
                         />
                     ) : (
-                        <Upload className="w-8 h-8 text-zinc-500 mb-4" />
+                        <Upload className="w-8 h-8 text-zinc-500 mb-4" aria-hidden />
                     )}
 
                     <p className="text-sm text-zinc-400 mb-1">
@@ -154,20 +168,49 @@ export default function FileUpload({ onFileSelect, isUploading, language = 'Engl
                             ? ('Analyzing ingredients...')
                             : preview
                                 ? fileName
-                                : ('Drop image here or click to upload')
+                                : ('Drop image here or use a button below')
                         }
                     </p>
+                    {!isUploading && !preview && (
+                        <>
+                            <p className="text-xs text-zinc-600 mb-3">
+                                JPEG, PNG, WebP, HEIC, AVIF · up to 10MB
+                            </p>
+                            {/* Compact capture tips — collapsible to stay out
+                                of the way of returning users. */}
+                            <details className="text-xs text-zinc-500 mb-3 max-w-xs w-full">
+                                <summary className="cursor-pointer inline-flex items-center gap-1.5 hover:text-zinc-300 transition select-none">
+                                    <Lightbulb size={12} aria-hidden />
+                                    Tips for a good photo
+                                </summary>
+                                <ul className="mt-2 space-y-1 text-left pl-1 leading-relaxed">
+                                    <li>· Shoot the <span className="text-zinc-300">back of the pack</span> — that's where ingredients live</li>
+                                    <li>· Fill the frame with the ingredient list — closer is better than wider</li>
+                                    <li>· Steady the phone and tap once to focus on the text</li>
+                                    <li>· Avoid glare; angle the pack away from overhead lights</li>
+                                </ul>
+                            </details>
+                        </>
+                    )}
 
                     {!isUploading && (
-                        <button
-                            onClick={onButtonClick}
-                            className="mt-3 px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition-colors duration-150 min-h-[44px]"
-                        >
-                            {preview
-                                ? ('Change Photo')
-                                : ('Select Photo')
-                            }
-                        </button>
+                        <div className="flex gap-2 mt-3 flex-wrap justify-center">
+                            <button
+                                onClick={() => cameraInputRef.current?.click()}
+                                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition-colors duration-150 min-h-[44px] flex items-center gap-1.5"
+                                aria-label="Take a photo with the camera"
+                            >
+                                <Camera size={14} />
+                                {'Take Photo'}
+                            </button>
+                            <button
+                                onClick={onButtonClick}
+                                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-sm font-medium rounded-lg transition-colors duration-150 min-h-[44px] border border-zinc-700"
+                                aria-label="Choose an image from your files"
+                            >
+                                {preview ? 'Change Photo' : 'Choose File'}
+                            </button>
+                        </div>
                     )}
                 </div>
             </div>

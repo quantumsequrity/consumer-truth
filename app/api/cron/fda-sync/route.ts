@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import crypto from 'crypto'
 
 // D1 database interface
 interface D1Database {
@@ -14,7 +15,23 @@ interface D1PreparedStatement {
 
 const FETCH_TIMEOUT = 10000
 const RATE_LIMIT_MS = 250 // 4 req/sec for OpenFDA
-const BATCH_LIMIT = 200 // Max ingredients per sync run
+// Each ingredient costs 2 OpenFDA calls + 2 * 250ms sleep ≈ 0.5s.
+// 50 ingredients ≈ 25s of pure sleep, comfortably inside a cron wall budget.
+// Previously 200, which guaranteed timeouts before the loop finished.
+const BATCH_LIMIT = 50
+
+// Timing-safe Bearer-token comparison. Reject early on bad shape so we never
+// even allocate the comparison buffer for clearly malformed input.
+function timingSafeBearerCheck(authHeader: string | null, expected: string): boolean {
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return false
+  const provided = authHeader.slice('Bearer '.length)
+  if (provided.length !== expected.length) return false
+  try {
+    return crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected))
+  } catch {
+    return false
+  }
+}
 
 function getIngredientsRefDb(): D1Database | null {
   try {
@@ -89,10 +106,10 @@ async function fetchFDARecalls(name: string): Promise<{
 }
 
 export async function POST(request: NextRequest) {
-  // Auth check
+  // Auth check — timing-safe Bearer compare.
   const authHeader = request.headers.get('authorization')
   const cronSecret = process.env.CRON_SECRET
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+  if (!cronSecret || !timingSafeBearerCheck(authHeader, cronSecret)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

@@ -93,7 +93,7 @@ async function main() {
 
   let hits = 0
   let misses = 0
-  const errors = 0
+  let errors = 0
   let sqlBatch: IngredientRow[] = []
 
   function flushSqlBatch() {
@@ -122,12 +122,13 @@ async function main() {
       batch.map(async (name) => {
         try {
           const data = await fetchPubChem(name)
-          return { name, data }
+          return { name, data, errored: false }
         } catch {
-          return { name, data: null }
+          return { name, data: null, errored: true }
         }
       })
     )
+    errors += results.filter(r => r.errored).length
 
     for (const { name, data } of results) {
       if (data && data.cid) {

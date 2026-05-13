@@ -28,8 +28,20 @@ if (!apiKey) {
 
 const genAI = new GoogleGenerativeAI(apiKey || '')
 
-// Get temperature from environment (default: 0.2 for deterministic analysis)
-const GEMINI_TEMPERATURE = parseFloat(process.env.GEMINI_TEMPERATURE || '0.2')
+// Get temperature from environment (default: 0.2 for deterministic analysis).
+// `parseFloat('abc')` returns NaN, which Gemini rejects on every call. Guard
+// with a clamp so a bad env var fails loud at boot, not silently per-request.
+function resolveTemperature(raw: string | undefined): number {
+  if (!raw) return 0.2
+  const parsed = parseFloat(raw)
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+    console.warn(`[Gemini] Invalid GEMINI_TEMPERATURE=${JSON.stringify(raw)} — falling back to 0.2`)
+    return 0.2
+  }
+  return parsed
+}
+
+const GEMINI_TEMPERATURE = resolveTemperature(process.env.GEMINI_TEMPERATURE)
 
 // Deterministic model for ingredient analysis (low temperature for consistency)
 export const modelDeterministic = genAI.getGenerativeModel({

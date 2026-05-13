@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { processImageAndAnalyze } from '@/lib/analysis'
 import { getFullProductDataByName } from '@/lib/product-data'
 import { execute, generateId } from '@/lib/db'
-import { rateLimit, getClientIdentifier, validateImageFile, validateFileSignature, validateLanguage, validateOrigin, getSecurityHeaders } from '@/lib/security'
+import { rateLimit, getClientIdentifier, validateImageFile, validateFileSignature, validateLanguage, validateOrigin, getSecurityHeaders, signScanId } from '@/lib/security'
 
 export const maxDuration = 60
 
@@ -116,10 +116,17 @@ export async function POST(req: NextRequest) {
             scanId = undefined
         }
 
+        // Mint an HMAC-signed token so the client can prove ownership of this
+        // scan on subsequent /api/question calls (load conversation history,
+        // append messages). Without it the question route still answers but
+        // refuses to read or write conversation history for this scan.
+        const scanToken = scanId ? signScanId(scanId) : undefined
+
         return NextResponse.json({
             product: result.productData,
             ingredients: result.ingredients,
             scanId,
+            scanToken,
             scannedCount: result.scannedCount,
             ocrSources: result.ocrSources,
             nutrition,

@@ -153,7 +153,7 @@ tests/fixtures/              # sample test images
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 20 (see `.nvmrc`)
 - A Cloudflare account (free tier works for dev)
 - A Google AI Studio API key — [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
 - *(Optional)* A Meta Business account with WhatsApp Cloud API access — [developers.facebook.com/apps](https://developers.facebook.com/apps/)

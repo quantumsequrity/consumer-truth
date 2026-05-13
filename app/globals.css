@@ -255,3 +255,41 @@ button, a, [role="button"] { -webkit-tap-highlight-color: transparent; }
 .bg-gradient-to-br.from-zinc-900,
 .bg-gradient-to-b.from-zinc-900 { --tw-gradient-from: var(--bg-surface) !important; }
 .to-zinc-950 { --tw-gradient-to: var(--bg-base) !important; }
+
+/* ============================================================
+   Print styles — when a user prints the result page we want a
+   clean, readable document, not a screenshot of the dark UI.
+   Strategy: force light background, expand every ingredient
+   card (so collapsed bodies don't get clipped), hide nav and
+   action buttons, drop animations.
+   ============================================================ */
+@media print {
+    html, body, main {
+        background: #ffffff !important;
+        color: #111111 !important;
+    }
+    nav, footer,
+    [role="dialog"],
+    .no-print {
+        display: none !important;
+    }
+    /* Expand collapsed ingredient cards so the printout actually
+       shows the analysis details. Targets the max-h-0 collapsed
+       state set in AnalysisResult.tsx. */
+    .max-h-0 {
+        max-height: none !important;
+        opacity: 1 !important;
+        overflow: visible !important;
+    }
+    /* Kill backdrop blur + sticky positioning which print weird. */
+    .sticky, .backdrop-blur-md, .backdrop-blur-sm {
+        position: static !important;
+        -webkit-backdrop-filter: none !important;
+        backdrop-filter: none !important;
+    }
+    /* Drop animations that flash during the print preview. */
+    * {
+        animation: none !important;
+        transition: none !important;
+    }
+}

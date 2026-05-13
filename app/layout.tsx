@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import { Inter, Fraunces } from 'next/font/google'
 import './globals.css'
+import { ToastProvider } from '@/components/Toast'
 
 const inter = Inter({
     subsets: ['latin'],
@@ -20,6 +21,15 @@ export const metadata: Metadata = {
     description: 'Scan a product label. Get a grounded safety read backed by FDA, EU, WHO, FSSAI, and IARC - not AI guesses. Photo, text, or voice.',
     keywords: ['ingredient analysis', 'label scanner', 'food safety', 'cosmetic safety', 'FDA', 'FSSAI', 'IARC', 'product ingredients'],
     authors: [{ name: 'Alzhal' }],
+    applicationName: 'Alzhal',
+    appleWebApp: {
+        capable: true,
+        title: 'Alzhal',
+        statusBarStyle: 'black-translucent',
+    },
+    formatDetection: {
+        telephone: false,
+    },
     openGraph: {
         title: 'Alzhal - What is actually in it?',
         description: 'A grounded ingredient read against real regulators. No wellness guesswork.',
@@ -30,8 +40,12 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
     width: 'device-width',
     initialScale: 1,
-    maximumScale: 1,
-    themeColor: '#FAF9F5',
+    // Theme color matches the dark navbar so the iOS / Android status bar
+    // blends in when the app is installed to the home screen.
+    themeColor: '#09090b',
+    // viewportFit=cover lets the safe-bottom utility actually reach the
+    // home-indicator area on notched iPhones.
+    viewportFit: 'cover',
 }
 
 export default function RootLayout({
@@ -41,7 +55,9 @@ export default function RootLayout({
 }) {
     return (
         <html lang="en" className={`${inter.variable} ${fraunces.variable}`}>
-            <body className={inter.className}>{children}</body>
+            <body className={inter.className}>
+                <ToastProvider>{children}</ToastProvider>
+            </body>
         </html>
     )
 }

@@ -31,6 +31,7 @@ const circuits: Record<string, CircuitBreakerState> = {
   cas: { failCount: 0, isOpen: false, openedAt: 0 },
   fda: { failCount: 0, isOpen: false, openedAt: 0 },
   pubchem: { failCount: 0, isOpen: false, openedAt: 0 },
+  off: { failCount: 0, isOpen: false, openedAt: 0 },
 }
 
 function isCircuitOpen(name: string): boolean {
@@ -355,11 +356,18 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}, timeout 
 
 // --- 1. OPEN FOOD/BEAUTY FACTS (The "Everything" Engine) ---
 export async function searchOpenWebFacts(query: string, type: 'food' | 'beauty' = 'food') {
+    if (isCircuitOpen('off')) return null
+
     try {
         const subdomain = type === 'beauty' ? 'world.openbeautyfacts.org' : 'world.openfoodfacts.org';
         const url = `https://${subdomain}/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&action=process&json=1`;
 
         const res = await fetchWithTimeout(url, { headers: HEADERS });
+        if (!res.ok) {
+            recordFailure('off')
+            return null
+        }
+        recordSuccess('off')
         const data = await res.json();
 
         if (data.products && data.products.length > 0) {
@@ -376,6 +384,7 @@ export async function searchOpenWebFacts(query: string, type: 'food' | 'beauty' 
         }
         return null;
     } catch (e) {
+        recordFailure('off')
         console.error(`Open${type}Facts lookup failed:`, e);
         return null;
     }

@@ -75,3 +75,13 @@ RENDERER_MODEL = "@cf/google/gemma-4-26b-a4b-it"
 # Add your custom domain (optional):
 # [[custom_domains]]
 # hostname = "your-domain.example.com"
+
+# Scheduled jobs. Wrangler will invoke /__scheduled which OpenNext routes by
+# matching cron expressions to your cron route handlers (here, /api/cron/*).
+# Hourly sweeps catch expired TTS audio so R2 doesn't grow unbounded.
+# The fda-sync cron is daily; bump cadence if your ingredient set is huge.
+[triggers]
+crons = [
+  "0 * * * *",   # /api/cron/audio-sweep — every hour
+  "0 3 * * *",   # /api/cron/fda-sync     — once a day at 03:00 UTC
+]

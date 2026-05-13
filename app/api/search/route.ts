@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { rateLimit, getClientIdentifier, sanitizeInput, getSecurityHeaders } from '@/lib/security'
+import { rateLimit, getClientIdentifier, sanitizeInput, validateOrigin, getSecurityHeaders } from '@/lib/security'
 import { searchProducts, searchProductsByBarcode, type ProductRecord } from '@/lib/product-data'
 
 export const maxDuration = 15
@@ -8,6 +8,10 @@ const limiter = rateLimit({ windowMs: 60000, maxRequests: 20 })
 
 export async function POST(req: NextRequest) {
   try {
+    if (!validateOrigin(req)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403, headers: getSecurityHeaders() })
+    }
+
     // Rate limiting
     const clientId = getClientIdentifier(req)
     const { allowed } = limiter(clientId)

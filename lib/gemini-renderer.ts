@@ -269,7 +269,27 @@ export async function renderGroundedFacts(
   const { verdict, reason } = computeVerdict(facts.facts, facts.is_natural)
   const missing = missingJurisdictions(facts.facts)
 
-  const perJurisdiction = facts.facts.map(f => ({
+  // Defense-in-depth: source_url comes from D1 fact_evidence rows, which
+  // are admin-seeded by ingesters under scripts/. We re-validate here in
+  // case a future ingester (or a manual SQL fix) lets through a non-http
+  // URL. The UI renders these as <a href={source_url}>; without this guard
+  // a poisoned `javascript:` URL would execute on click.
+  const isSafeUrl = (u: string | null | undefined): boolean => {
+    if (!u || typeof u !== 'string') return false
+    try {
+      const parsed = new URL(u)
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+    } catch {
+      return false
+    }
+  }
+  const safeFacts = facts.facts.filter(f => {
+    if (isSafeUrl(f.source_url)) return true
+    console.warn(`[Renderer] Dropping fact with unsafe source_url: ${JSON.stringify(f.source_url)}`)
+    return false
+  })
+
+  const perJurisdiction = safeFacts.map(f => ({
     jurisdiction: f.jurisdiction,
     status: f.status,
     regulation_ref: f.regulation_ref ?? null,
@@ -277,7 +297,7 @@ export async function renderGroundedFacts(
     source_name: f.source_name,
   }))
 
-  const citations = facts.facts.map(f => ({
+  const citations = safeFacts.map(f => ({
     fact_type: f.fact_type,
     jurisdiction: f.jurisdiction,
     source_name: f.source_name,
@@ -285,7 +305,7 @@ export async function renderGroundedFacts(
     snapshot_date: f.snapshot_date,
   }))
 
-  const sourcesUsed = Array.from(new Set(facts.facts.map(f => f.source_url)))
+  const sourcesUsed = Array.from(new Set(safeFacts.map(f => f.source_url)))
 
   // Fast path: if there are no facts and language is English, don't even call the LLM.
   if (facts.facts.length === 0 && userLanguage.toLowerCase() === 'english') {
@@ -372,19 +392,23 @@ export function validateNoJurisdictionLeak(
   rendered: RenderedAnalysis,
   allowedJurisdictions: Set<string>,
 ): { ok: boolean; leaks: string[] } {
+  // Patterns cover both the acronyms and common paraphrases an LLM is likely
+  // to substitute when it tries to dress up a claim. False positives here are
+  // cheaper than false negatives — the cost is the prose getting stripped and
+  // replaced with the deterministic verdict_reason.
   const leakPatterns: Array<{ pattern: RegExp; jurisdiction: string }> = [
-    { pattern: /\bFSSAI\b/i,                           jurisdiction: 'IN_FSSAI' },
-    { pattern: /\bBIS\b|\bIS 4707\b/i,                 jurisdiction: 'IN_BIS' },
-    { pattern: /\bFDA\b/i,                             jurisdiction: 'US_FDA' },
-    { pattern: /\bEFSA\b/i,                            jurisdiction: 'EFSA' },
-    { pattern: /\bEU\b|\bEuropean Union\b|\bCosIng\b/i, jurisdiction: 'EU' },
-    { pattern: /\bIARC\b|\bWHO\b/i,                    jurisdiction: 'WHO_IARC' },
-    { pattern: /\bFSANZ\b/i,                           jurisdiction: 'AU_NZ_FSANZ' },
-    { pattern: /\bHealth Canada\b/i,                   jurisdiction: 'CA_HC' },
-    { pattern: /\bMHLW\b/i,                            jurisdiction: 'JP_MHLW' },
-    { pattern: /\bCodex\s*Alimentarius\b|\bCodex\b/i,  jurisdiction: 'CODEX' },
-    { pattern: /\bUK\s*FSA\b|\bUK\s*Food\s*Standards\s*Agency\b/i, jurisdiction: 'UK_FSA' },
-    { pattern: /\bNordic\b/i,                          jurisdiction: 'NORDIC' },
+    { pattern: /\bFSSAI\b|\bFood\s*Safety\s*and\s*Standards\s*Authority\b/i, jurisdiction: 'IN_FSSAI' },
+    { pattern: /\bBIS\b|\bIS\s*4707\b|\bBureau\s*of\s*Indian\s*Standards\b/i, jurisdiction: 'IN_BIS' },
+    { pattern: /\bFDA\b|\bFood\s*and\s*Drug\s*Administration\b|\bCFR\s*21\b|\b21\s*CFR\b/i, jurisdiction: 'US_FDA' },
+    { pattern: /\bEFSA\b|\bEuropean\s*Food\s*Safety\s*Authority\b/i, jurisdiction: 'EFSA' },
+    { pattern: /\bEU\b|\bEuropean\s*Union\b|\bCosIng\b|\bEuropean\s*regulators?\b/i, jurisdiction: 'EU' },
+    { pattern: /\bIARC\b|\bWHO\b|\bWorld\s*Health\s*Organi[sz]ation\b|\bInternational\s*Agency\s*for\s*Research\s*on\s*Cancer\b/i, jurisdiction: 'WHO_IARC' },
+    { pattern: /\bFSANZ\b|\bFood\s*Standards\s*Australia\s*New\s*Zealand\b/i, jurisdiction: 'AU_NZ_FSANZ' },
+    { pattern: /\bHealth\s*Canada\b|\bCanadian\s*health\s*authorit/i, jurisdiction: 'CA_HC' },
+    { pattern: /\bMHLW\b|\bMinistry\s*of\s*Health,?\s*Labou?r\s*and\s*Welfare\b|\bJapanese?\s*regulators?\b/i, jurisdiction: 'JP_MHLW' },
+    { pattern: /\bCodex\s*Alimentarius\b|\bCodex\b/i, jurisdiction: 'CODEX' },
+    { pattern: /\bUK\s*FSA\b|\bUK\s*Food\s*Standards\s*Agency\b|\bBritish\s*food\s*authorit/i, jurisdiction: 'UK_FSA' },
+    { pattern: /\bNordic\b/i, jurisdiction: 'NORDIC' },
   ]
 
   const textBlobs = [rendered.simple_name, rendered.how_its_made ?? '', rendered.safety_summary].join(' ')

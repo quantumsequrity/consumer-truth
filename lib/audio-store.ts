@@ -1,10 +1,23 @@
 import crypto from 'crypto'
 
 // R2 bucket type (from Cloudflare Workers runtime)
+interface R2Object {
+  key: string
+  uploaded?: Date | string
+  customMetadata?: Record<string, string>
+}
+
+interface R2ListResult {
+  objects: R2Object[]
+  truncated?: boolean
+  cursor?: string
+}
+
 interface R2Bucket {
   put(key: string, value: ArrayBuffer | string, options?: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> }): Promise<any>
   get(key: string): Promise<{ body: ReadableStream; httpMetadata?: { contentType?: string }; size: number } | null>
   delete(key: string | string[]): Promise<void>
+  list(options?: { prefix?: string; cursor?: string; limit?: number }): Promise<R2ListResult>
 }
 
 // In-memory fallback for local dev (not on Cloudflare Workers)
@@ -17,6 +30,12 @@ interface AudioEntry {
 const memStore = new Map<string, AudioEntry>()
 const MAX_ENTRIES = 50
 const TTL_MS = 5 * 60 * 1000 // 5 minutes
+
+// R2 has no built-in object TTL. We stamp a createdAt epoch ms on each upload
+// and let the sweeper (app/api/cron/audio-sweep) delete anything older than
+// R2_AUDIO_TTL_MS. Default: 1 hour, which is plenty for a freshly-issued TTS
+// reply to be played back from WhatsApp / Telegram / the web client.
+const R2_AUDIO_TTL_MS = 60 * 60 * 1000
 
 /**
  * Get the R2 bucket binding if running on Cloudflare Workers.
@@ -97,5 +116,51 @@ export async function getAudio(id: string): Promise<{ buffer: Buffer; mimeType: 
       return null
     }
     return { buffer: entry.buffer, mimeType: entry.mimeType }
+  }
+}
+
+/**
+ * Sweep expired audio objects from R2. Designed to be called from a cron
+ * route — see app/api/cron/audio-sweep/route.ts. Returns the count of
+ * deleted keys plus a `truncated` flag the caller can use to schedule a
+ * follow-up run when the bucket has more than `pageLimit` candidates.
+ *
+ * Safe to call repeatedly; works as a noop when no R2 binding is available.
+ */
+export async function sweepExpiredAudio(
+  options: { ttlMs?: number; pageLimit?: number } = {},
+): Promise<{ scanned: number; deleted: number; truncated: boolean }> {
+  const bucket = getR2Bucket()
+  if (!bucket) return { scanned: 0, deleted: 0, truncated: false }
+
+  const ttlMs = options.ttlMs ?? R2_AUDIO_TTL_MS
+  const limit = options.pageLimit ?? 1000
+  const cutoff = Date.now() - ttlMs
+
+  const listed = await bucket.list({ prefix: 'tts/', limit })
+  const toDelete: string[] = []
+
+  for (const obj of listed.objects || []) {
+    const stampedAt = Number(obj.customMetadata?.createdAt)
+    const uploadedAt = obj.uploaded
+      ? (typeof obj.uploaded === 'string' ? Date.parse(obj.uploaded) : obj.uploaded.getTime())
+      : NaN
+
+    // Prefer our own stamp (always set on `storeAudio`); fall back to R2's
+    // upload timestamp for legacy objects that pre-date the stamp.
+    const createdAt = Number.isFinite(stampedAt) ? stampedAt : uploadedAt
+    if (!Number.isFinite(createdAt)) continue
+    if (createdAt < cutoff) toDelete.push(obj.key)
+  }
+
+  if (toDelete.length > 0) {
+    // R2 delete accepts an array.
+    await bucket.delete(toDelete)
+  }
+
+  return {
+    scanned: listed.objects?.length ?? 0,
+    deleted: toDelete.length,
+    truncated: !!listed.truncated,
   }
 }

@@ -119,11 +119,46 @@ const FILE_SIGNATURES: Record<string, number[][]> = {
   'image/heif': [], // HEIF uses ftyp box, checked separately
 }
 
-// Check if buffer matches ftyp-based formats (AVIF, HEIC, HEIF)
-function isFtypFormat(bytes: Uint8Array): boolean {
-  // ftyp box: bytes 4-7 should be 'ftyp'
+// Check if buffer matches one of the expected ftyp brand boxes.
+//
+// ISOBMFF files start with a "ftyp" box at byte 4-7 followed by a 4-byte
+// "major brand" at byte 8-11. The previous version only verified the "ftyp"
+// magic, which means any MP4 / MOV / HEIF-video file would pass an AVIF
+// check. We now require the major brand to match one of the brands we
+// actually accept for image uploads.
+const FTYP_BRAND_ALIASES: Record<string, string[]> = {
+  'image/avif': ['avif', 'avis'],
+  'image/heic': ['heic', 'heix', 'heim', 'heis', 'mif1', 'msf1', 'hevc', 'hevx'],
+  'image/heif': ['mif1', 'msf1', 'heic', 'heix'],
+}
+
+function readBrand(bytes: Uint8Array, offset: number): string {
+  if (bytes.length < offset + 4) return ''
+  return String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3])
+}
+
+function isFtypFormat(bytes: Uint8Array, mimeType?: string): boolean {
   if (bytes.length < 12) return false
-  return bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70
+  // 'ftyp' at offset 4.
+  if (bytes[4] !== 0x66 || bytes[5] !== 0x74 || bytes[6] !== 0x79 || bytes[7] !== 0x70) {
+    return false
+  }
+  if (!mimeType) return true
+
+  const allowed = FTYP_BRAND_ALIASES[mimeType]
+  if (!allowed) return true
+
+  const brand = readBrand(bytes, 8)
+  if (allowed.includes(brand)) return true
+
+  // Compatible brands list follows starting at byte 16 in some files.
+  // We do a small forward scan (no full box parse — just enough to catch
+  // legitimate files that put the canonical brand in the compatible list).
+  for (let off = 16; off + 4 <= Math.min(bytes.length, 64); off += 4) {
+    const compat = readBrand(bytes, off)
+    if (allowed.includes(compat)) return true
+  }
+  return false
 }
 
 // Validate file magic bytes against claimed MIME type
@@ -133,9 +168,9 @@ export async function validateFileSignature(file: File): Promise<boolean> {
 
   const claimed = file.type.toLowerCase()
 
-  // ftyp-based formats (AVIF, HEIC, HEIF)
+  // ftyp-based formats (AVIF, HEIC, HEIF) — brand must match the claim.
   if (['image/avif', 'image/heic', 'image/heif'].includes(claimed)) {
-    return isFtypFormat(bytes)
+    return isFtypFormat(bytes, claimed)
   }
 
   // Audio formats - basic signature checks
@@ -147,7 +182,7 @@ export async function validateFileSignature(file: File): Promise<boolean> {
     // WAV: RIFF header
     if (claimed === 'audio/wav' && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46) return true
     // WebM/MP4: ftyp box or EBML header
-    if ((claimed === 'audio/webm' || claimed === 'audio/mp4') && (bytes[0] === 0x1A && bytes[1] === 0x45 && bytes[2] === 0xDF && bytes[3] === 0xA3 || isFtypFormat(bytes))) return true
+    if ((claimed === 'audio/webm' || claimed === 'audio/mp4') && (bytes[0] === 0x1A && bytes[1] === 0x45 && bytes[2] === 0xDF && bytes[3] === 0xA3 || isFtypFormat(bytes /* audio: brand not enforced */))) return true
     // Unknown audio format - reject
     return false
   }
@@ -197,33 +232,141 @@ export function validateLanguage(lang: string): string {
   return 'English' // Default fallback
 }
 
-// Hash phone number for privacy
-// Generate random salt at startup if env var not set (unique per process)
-const HASH_SALT = process.env.HASH_SALT || crypto.randomBytes(32).toString('hex')
-
-export function hashPhoneNumber(phone: string): string {
-  return crypto.createHash('sha256').update(HASH_SALT + phone).digest('hex')
+// Hash phone number for privacy.
+//
+// HASH_SALT must be stable across all worker isolates, otherwise the same
+// phone number produces different hashes from different isolates and any
+// cross-isolate keying (rate-limit buckets, dedup, audit logs) silently
+// breaks. In production we hard-fail if it is missing rather than mint a
+// per-process random salt.
+//
+// Resolution is lazy (first-use, not module-load) because Next.js's
+// page-data collection during `next build` runs under NODE_ENV=production
+// without any wrangler secrets — throwing at module load there breaks the
+// build. The real runtime always exercises hashPhoneNumber, so this still
+// surfaces a missing salt loudly.
+let _hashSalt: string | null = null
+function getHashSalt(): string {
+  if (_hashSalt !== null) return _hashSalt
+  const fromEnv = process.env.HASH_SALT
+  if (fromEnv && fromEnv.length >= 16) {
+    _hashSalt = fromEnv
+    return _hashSalt
+  }
+  if (process.env.NODE_ENV === 'production' && process.env.NEXT_PHASE !== 'phase-production-build') {
+    throw new Error(
+      'HASH_SALT must be set (>=16 chars) as a wrangler secret in production. ' +
+      'A per-process random salt makes hashed phone numbers unstable across isolates.'
+    )
+  }
+  if (process.env.NODE_ENV !== 'production') {
+    console.warn('[security] HASH_SALT not set — using a random per-process salt (dev only).')
+  }
+  _hashSalt = crypto.randomBytes(32).toString('hex')
+  return _hashSalt
 }
 
-// Security headers for API responses
+export function hashPhoneNumber(phone: string): string {
+  return crypto.createHash('sha256').update(getHashSalt() + phone).digest('hex')
+}
+
+// Scan token signing.
+//
+// The /api/question route and follow-up flows accept a scan_id and load the
+// scan's conversation history into the prompt. Without ownership proof, anyone
+// who guessed (or was sent) a scan_id could read the prior chat. Solution:
+// every route that creates a scan also mints a scan_token = HMAC(scan_id) and
+// returns it to the client. The client passes it back on subsequent calls.
+// Stateless — no extra DB column needed.
+// Resolved lazily — see getHashSalt() above for why module-load is wrong.
+let _scanSecret: string | null = null
+function getScanSecret(): string {
+  if (_scanSecret !== null) return _scanSecret
+  const fromEnv = process.env.SCAN_TOKEN_SECRET
+  if (fromEnv && fromEnv.length >= 16) {
+    _scanSecret = fromEnv
+    return _scanSecret
+  }
+  if (process.env.NODE_ENV === 'production' && process.env.NEXT_PHASE !== 'phase-production-build') {
+    throw new Error(
+      'SCAN_TOKEN_SECRET must be set (>=16 chars) as a wrangler secret in production. ' +
+      'Without it the scan ownership check cannot enforce conversation privacy.'
+    )
+  }
+  if (process.env.NODE_ENV !== 'production') {
+    console.warn('[security] SCAN_TOKEN_SECRET not set — using a random per-process secret (dev only).')
+  }
+  // Tokens minted with this random secret won't verify on the next isolate
+  // boot, which is the desired loud failure in dev.
+  _scanSecret = crypto.randomBytes(32).toString('hex')
+  return _scanSecret
+}
+
+/** Mint an HMAC-SHA256 scan token for a given scan_id. */
+export function signScanId(scanId: string): string {
+  return crypto.createHmac('sha256', getScanSecret()).update(scanId).digest('hex')
+}
+
+/**
+ * Timing-safe verification of a scan_token against a scan_id. Returns false
+ * when either input is missing or the HMAC does not match.
+ */
+export function verifyScanToken(scanId: string | null | undefined, token: string | null | undefined): boolean {
+  if (!scanId || !token) return false
+
+  // Quick reject on obviously wrong inputs to keep timing more uniform.
+  if (typeof scanId !== 'string' || typeof token !== 'string') return false
+
+  // signScanId hits getScanSecret() — in build phase this returns a random
+  // secret that won't match anything, which is the right behavior (no scan
+  // tokens are issued during build).
+  let expected: string
+  try {
+    expected = signScanId(scanId)
+  } catch {
+    return false
+  }
+  if (token.length !== expected.length) return false
+
+  try {
+    return crypto.timingSafeEqual(Buffer.from(token), Buffer.from(expected))
+  } catch {
+    return false
+  }
+}
+
+// Security headers for API responses.
+// X-XSS-Protection intentionally omitted: deprecated, removed from modern
+// browsers, and historically caused XSS in old IE/Chrome auditors.
 export function getSecurityHeaders() {
   return {
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
-    'X-XSS-Protection': '1; mode=block',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'Permissions-Policy': 'geolocation=(), microphone=(), camera=()',
   }
 }
 
-// CSRF protection: verify Origin header matches our domain
+/**
+ * CSRF protection: verify the request originated from our own page.
+ *
+ * Browser fetch() always sends Origin on cross-origin requests. Same-origin
+ * requests usually also send it, but some legacy navigations omit it — in
+ * those cases we fall back to Referer. If neither is present we reject,
+ * because that's the shape of a non-browser caller (curl, server-to-server,
+ * or an attacker explicitly stripping the header).
+ *
+ * Webhook routes (WhatsApp, Telegram) do NOT call this function — they
+ * authenticate via HMAC signature instead.
+ */
 export function validateOrigin(req: NextRequest): boolean {
   const origin = req.headers.get('origin')
   const referer = req.headers.get('referer')
 
-  // Webhook endpoints (WhatsApp, Telegram) don't send Origin headers
-  // Allow requests with no Origin (same-origin requests in some browsers)
-  if (!origin && !referer) return true
+  // Reject when both signals are missing. Previously this was a permissive
+  // pass-through, which let a referrer-stripping page hit any non-webhook
+  // route.
+  if (!origin && !referer) return false
 
   const host = req.headers.get('host') || ''
   const allowedOrigins = [

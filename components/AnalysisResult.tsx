@@ -1,14 +1,17 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import {
     CheckCircle2, AlertTriangle, XCircle, ChevronDown, Share2,
     ShieldCheck, ShieldAlert, Info, ExternalLink, BookOpen,
     Copy, MessageCircle, Send, Loader2, Beaker, Pill,
     UtensilsCrossed, SprayCan, Droplets, FlaskConical, Ban,
-    ThumbsUp, ThumbsDown, Eye, TrendingUp, Camera, Search
+    ThumbsUp, ThumbsDown, Eye, TrendingUp, Camera, Search,
+    Download
 } from 'lucide-react'
 import { WhatThisMeans, LearnMoreLinks } from './IngredientGuidance'
+import { useToast } from './Toast'
+import { matchAllergens, loadAllergenProfile, type AllergenMatch } from '@/lib/allergens'
 
 // Map the internal 3-state verdict (+ banned list) to the broader 5-state
 // guidance verdict used by WhatThisMeans, so a banned ingredient always shows
@@ -95,6 +98,7 @@ interface AnalysisResultProps {
         }
         ingredients: Ingredient[]
         scanId?: string
+        scanToken?: string
         scannedCount?: number
         isProductNameLookup?: boolean
         nutrition?: any
@@ -418,6 +422,7 @@ function StatusCard({ flag, label, value }: { flag: string; label: string; value
 
 function IngredientFeedback({ scanId, ingredientName, language }: { scanId: string; ingredientName: string; language: string }) {
     const [submitted, setSubmitted] = useState<'up' | 'down' | null>(null)
+    const { toast } = useToast()
 
     const handleFeedback = async (rating: 'up' | 'down') => {
         try {
@@ -426,7 +431,13 @@ function IngredientFeedback({ scanId, ingredientName, language }: { scanId: stri
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ scan_id: scanId, rating, ingredient_name: ingredientName }),
             })
-            if (res.ok) setSubmitted(rating)
+            if (res.ok) {
+                setSubmitted(rating)
+                toast({
+                    kind: 'success',
+                    message: rating === 'up' ? `Thanks — marked “${ingredientName}” as correct` : `Flagged “${ingredientName}” for review`,
+                })
+            }
         } catch { /* Non-blocking */ }
     }
 
@@ -467,6 +478,7 @@ function FeedbackButtons({ scanId, language }: { scanId: string; language: strin
     const [submitted, setSubmitted] = useState<'up' | 'down' | null>(null)
     const [showComment, setShowComment] = useState(false)
     const [comment, setComment] = useState('')
+    const { toast } = useToast()
 
     const handleFeedback = async (rating: 'up' | 'down') => {
         setSubmitted(rating)
@@ -479,6 +491,9 @@ function FeedbackButtons({ scanId, language }: { scanId: string; language: strin
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ scan_id: scanId, rating }),
             })
+            if (rating === 'up') {
+                toast({ kind: 'success', message: 'Thanks for the feedback!' })
+            }
         } catch {
             // Non-blocking
         }
@@ -493,6 +508,7 @@ function FeedbackButtons({ scanId, language }: { scanId: string; language: strin
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ scan_id: scanId, rating: 'down', comment }),
             })
+            toast({ kind: 'success', message: 'Feedback saved — thank you' })
         } catch {
             // Non-blocking
         }
@@ -564,60 +580,108 @@ function FeedbackButtons({ scanId, language }: { scanId: string; language: strin
    Share Modal
    ======================================== */
 
-function ShareModal({ text, onClose, language, scanId }: { text: string; onClose: () => void; language: string; scanId?: string }) {
+function ShareModal({ text, onClose, language, scanId, productName }: { text: string; onClose: () => void; language: string; scanId?: string; productName: string }) {
     const [copied, setCopied] = useState(false)
+    const { toast } = useToast()
 
-    const trackShare = (method: 'whatsapp' | 'copy') => {
+    const trackShare = (method: 'whatsapp' | 'copy' | 'native') => {
         if (!scanId) return
+        // The /api/share route accepts only 'whatsapp' | 'copy' today. We map
+        // 'native' to 'copy' for tracking — server validates the union.
+        const tracked = method === 'native' ? 'copy' : method
         fetch('/api/share', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ scan_id: scanId, method }),
+            body: JSON.stringify({ scan_id: scanId, method: tracked }),
         }).catch(() => {})
     }
 
-    const handleCopy = () => {
-        navigator.clipboard.writeText(text)
-        setCopied(true)
-        trackShare('copy')
-        setTimeout(() => setCopied(false), 2000)
+    const canUseNativeShare =
+        typeof navigator !== 'undefined' &&
+        typeof navigator.share === 'function'
+
+    const handleNativeShare = async () => {
+        try {
+            await navigator.share({
+                title: `Alzhal — ${productName}`,
+                text,
+            })
+            trackShare('native')
+            // No success toast on native share: the OS already shows feedback,
+            // and stacking two confirmations is jarring on iOS.
+            onClose()
+        } catch (err) {
+            // AbortError = user dismissed the share sheet. Silent.
+            if ((err as Error)?.name !== 'AbortError') {
+                toast({ kind: 'error', message: "Couldn't open the share sheet — copy instead?" })
+            }
+        }
+    }
+
+    const handleCopy = async () => {
+        try {
+            await navigator.clipboard.writeText(text)
+            setCopied(true)
+            trackShare('copy')
+            toast({ kind: 'success', message: 'Report copied to clipboard' })
+            setTimeout(() => setCopied(false), 2000)
+        } catch {
+            toast({ kind: 'error', message: 'Could not copy — your browser blocked clipboard access' })
+        }
     }
 
     const handleWhatsApp = () => {
         trackShare('whatsapp')
-        window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank')
+        window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer')
     }
 
     return (
-        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fade-in" onClick={onClose}>
+        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fade-in" onClick={onClose} role="dialog" aria-modal="true" aria-labelledby="share-modal-title">
             <div className="glass-card rounded-t-2xl sm:rounded-2xl p-5 sm:p-6 max-w-md w-full space-y-4 animate-fade-in-scale safe-bottom" onClick={e => e.stopPropagation()}>
                 {/* Drag handle for mobile */}
-                <div className="w-10 h-1 rounded-full bg-white/20 mx-auto sm:hidden" />
-                <h3 className="text-lg font-semibold text-white">
+                <div className="w-10 h-1 rounded-full bg-white/20 mx-auto sm:hidden" aria-hidden />
+                <h3 id="share-modal-title" className="text-lg font-semibold text-white">
                     {'Share Report'}
                 </h3>
                 <div className="p-3 rounded-xl bg-black/30 border border-white/5 text-sm text-gray-300 whitespace-pre-line max-h-40 overflow-y-auto">
                     {text}
                 </div>
-                <div className="flex gap-3">
-                    <button
-                        onClick={handleWhatsApp}
-                        className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-green-600 hover:bg-green-700 text-white font-medium transition active:scale-95 min-h-[48px]"
-                    >
-                        <MessageCircle size={18} />
-                        WhatsApp
-                    </button>
-                    <button
-                        onClick={handleCopy}
-                        className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border transition active:scale-95 font-medium min-h-[48px] ${
-                            copied
-                                ? 'bg-green-500/20 border-green-500/30 text-green-400'
-                                : 'bg-white/5 border-white/10 text-gray-300 hover:bg-white/10'
-                        }`}
-                    >
-                        {copied ? <CheckCircle2 size={18} /> : <Copy size={18} />}
-                        {copied ? ('Copied!') : ('Copy')}
-                    </button>
+                <div className="flex flex-col gap-2">
+                    {/* Native share is the primary on mobile (iOS / Android). On
+                        desktop it's usually absent — we hide it and fall back
+                        to the explicit WhatsApp + Copy buttons. */}
+                    {canUseNativeShare && (
+                        <button
+                            onClick={handleNativeShare}
+                            className="flex items-center justify-center gap-2 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium transition active:scale-95 min-h-[48px]"
+                            aria-label="Open the system share sheet"
+                        >
+                            <Share2 size={18} />
+                            Share via…
+                        </button>
+                    )}
+                    <div className="flex gap-2">
+                        <button
+                            onClick={handleWhatsApp}
+                            className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-green-600 hover:bg-green-700 text-white font-medium transition active:scale-95 min-h-[48px]"
+                            aria-label="Open WhatsApp share"
+                        >
+                            <MessageCircle size={18} />
+                            WhatsApp
+                        </button>
+                        <button
+                            onClick={handleCopy}
+                            className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border transition active:scale-95 font-medium min-h-[48px] ${
+                                copied
+                                    ? 'bg-green-500/20 border-green-500/30 text-green-400'
+                                    : 'bg-white/5 border-white/10 text-gray-300 hover:bg-white/10'
+                            }`}
+                            aria-label="Copy report to clipboard"
+                        >
+                            {copied ? <CheckCircle2 size={18} /> : <Copy size={18} />}
+                            {copied ? ('Copied!') : ('Copy')}
+                        </button>
+                    </div>
                 </div>
                 <button onClick={onClose} className="w-full py-3 text-sm text-gray-500 hover:text-white transition min-h-[44px]">
                     {'Close'}
@@ -631,7 +695,7 @@ function ShareModal({ text, onClose, language, scanId }: { text: string; onClose
    Follow-up Question Component
    ======================================== */
 
-function FollowUpQuestion({ productName, language, scanId }: { productName: string; language: string; scanId?: string }) {
+function FollowUpQuestion({ productName, language, scanId, scanToken }: { productName: string; language: string; scanId?: string; scanToken?: string }) {
     const [question, setQuestion] = useState('')
     const [conversation, setConversation] = useState<{ role: 'user' | 'assistant'; content: string }[]>([])
     const [loading, setLoading] = useState(false)
@@ -658,6 +722,7 @@ function FollowUpQuestion({ productName, language, scanId }: { productName: stri
                     context: `Product: ${productName}`,
                     language,
                     scan_id: scanId,
+                    scan_token: scanToken,
                 }),
             })
 
@@ -762,6 +827,22 @@ export default function AnalysisResult({ data, language = 'English' }: AnalysisR
     const [showShareModal, setShowShareModal] = useState(false)
     const [filterVerdict, setFilterVerdict] = useState<'all' | 'safe' | 'warning' | 'danger'>('all')
     const [searchQuery, setSearchQuery] = useState('')
+    // Allergen-profile matches are derived state from the `data` prop plus
+    // the user's stored profile. useMemo is the correct hook here — using
+    // useState + useEffect to compute derived state is the anti-pattern
+    // react-hooks/set-state-in-effect catches, and would trigger an extra
+    // render on every scan.
+    const allergenMatches: AllergenMatch[] = useMemo(() => {
+        if (typeof window === 'undefined') return []
+        const active = loadAllergenProfile()
+        if (active.length === 0 || !data?.ingredients?.length) return []
+        const all: AllergenMatch[] = []
+        for (const ing of data.ingredients) {
+            const hits = matchAllergens(ing.name, active)
+            for (const h of hits) all.push(h)
+        }
+        return all
+    }, [data])
 
     const product = data.product
     const ingredients = data.ingredients || []
@@ -811,8 +892,74 @@ export default function AnalysisResult({ data, language = 'English' }: AnalysisR
         `Safety Score: ${safetyScore}/100 (${scoreLabel})\n\n` +
         `Total: ${totalCount} ingredients\n` +
         `Safe: ${safeCount} | Caution: ${warningCount} | Avoid: ${dangerCount}\n\n` +
-        `Analyzed on Sage Insight\n` +
+        `Analyzed on Alzhal\n` +
         `Data: FDA, EU CosIng, WHO, BIS, FSSAI, EPA`
+
+    /**
+     * Build a Markdown export of the whole analysis. Used by the download
+     * button and is also nicely paste-able into chat / docs / GitHub issues.
+     * Stays readable as plain text too — no fancy HTML embeds.
+     */
+    const buildMarkdownReport = (): string => {
+        const lines: string[] = []
+        lines.push(`# ${product.product_name}`)
+        if (product.brand) lines.push(`**Brand:** ${product.brand}`)
+        if (product.category) lines.push(`**Category:** ${product.category}`)
+        lines.push('')
+        lines.push(`## Safety Score: ${safetyScore}/100 — ${scoreLabel}`)
+        lines.push('')
+        lines.push(`- Safe: **${safeCount}**`)
+        lines.push(`- Caution: **${warningCount}**`)
+        lines.push(`- Avoid: **${dangerCount}**`)
+        lines.push(`- Total ingredients: **${totalCount}**`)
+        lines.push('')
+        lines.push('## Ingredients')
+        for (const item of ingredients) {
+            const v = getVerdict(item)
+            const verdictLabel = v === 'danger' ? 'AVOID' : v === 'warning' ? 'CAUTION' : 'SAFE'
+            lines.push('')
+            lines.push(`### ${item.name} — ${verdictLabel}`)
+            const a = item.analysis
+            if (a.simple_name) lines.push(a.simple_name)
+            if (a.cas_number && a.cas_number !== 'N/A') lines.push(`- CAS: ${a.cas_number}`)
+            const banned = a.banned_countries || a.banned_in || []
+            if (banned.length) lines.push(`- Banned in: ${banned.join(', ')}`)
+            if (a.concerns && a.concerns.length > 0) {
+                lines.push('- Concerns:')
+                for (const c of a.concerns) lines.push(`  - ${c}`)
+            }
+            if (a.sources_cited && a.sources_cited.length > 0) {
+                lines.push(`- Sources: ${a.sources_cited.join('; ')}`)
+            }
+        }
+        lines.push('')
+        lines.push('---')
+        lines.push('_Generated by Alzhal — educational information only, not medical advice._')
+        lines.push(`_Generated at ${new Date().toISOString()}_`)
+        return lines.join('\n')
+    }
+
+    const handleDownload = () => {
+        try {
+            const md = buildMarkdownReport()
+            const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
+            const url = URL.createObjectURL(blob)
+            const safeName = (product.product_name || 'report')
+                .replace(/[^\w\d\-]+/g, '-')
+                .replace(/^-+|-+$/g, '')
+                .slice(0, 60) || 'report'
+            const a = document.createElement('a')
+            a.href = url
+            a.download = `alzhal-${safeName}-${new Date().toISOString().slice(0, 10)}.md`
+            document.body.appendChild(a)
+            a.click()
+            document.body.removeChild(a)
+            // Revoke after a tick so Firefox actually downloads the file.
+            setTimeout(() => URL.revokeObjectURL(url), 1000)
+        } catch (e) {
+            console.error('[AnalysisResult] download failed:', e)
+        }
+    }
 
     const filteredIngredients = ingredients.filter(i => {
         if (filterVerdict !== 'all' && getVerdict(i) !== filterVerdict) return false
@@ -829,8 +976,60 @@ export default function AnalysisResult({ data, language = 'English' }: AnalysisR
     const warningPercent = totalCount > 0 ? (warningCount / totalCount) * 100 : 0
     const dangerPercent = totalCount > 0 ? (dangerCount / totalCount) * 100 : 0
 
+    // Group matches by allergen so the banner doesn't list the same
+    // category twice when multiple ingredients hit it.
+    const groupedAllergens = (() => {
+        const map = new Map<string, { label: string; ingredients: Set<string> }>()
+        for (const m of allergenMatches) {
+            if (!map.has(m.allergenKey)) {
+                map.set(m.allergenKey, { label: m.allergenLabel, ingredients: new Set() })
+            }
+            map.get(m.allergenKey)!.ingredients.add(m.ingredientName)
+        }
+        return [...map.entries()].map(([key, v]) => ({
+            key,
+            label: v.label,
+            ingredients: [...v.ingredients],
+        }))
+    })()
+
     return (
         <div className="w-full max-w-5xl mx-auto pb-20 space-y-6 animate-fade-in">
+
+            {/* ====== ALLERGEN ALERT (above everything) ====== */}
+            {groupedAllergens.length > 0 && (
+                <div
+                    role="alert"
+                    className="glass-card rounded-2xl border border-amber-500/30 bg-amber-500/[0.08] p-4 sm:p-5 animate-fade-in-up"
+                >
+                    <div className="flex items-start gap-3">
+                        <div className="w-9 h-9 rounded-xl bg-amber-500/20 flex items-center justify-center flex-shrink-0">
+                            <AlertTriangle size={18} className="text-amber-400" aria-hidden />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold text-amber-200 mb-1">
+                                {groupedAllergens.length === 1
+                                    ? `Heads up — this matches your allergen profile`
+                                    : `Heads up — ${groupedAllergens.length} of your allergens are in this product`}
+                            </p>
+                            <ul className="space-y-1">
+                                {groupedAllergens.map(g => (
+                                    <li key={g.key} className="text-xs text-amber-100/90 leading-relaxed">
+                                        <span className="font-semibold">{g.label}:</span>{' '}
+                                        <span className="text-amber-100/70">
+                                            {g.ingredients.slice(0, 4).join(', ')}
+                                            {g.ingredients.length > 4 && ` (+${g.ingredients.length - 4} more)`}
+                                        </span>
+                                    </li>
+                                ))}
+                            </ul>
+                            <p className="text-[10px] text-amber-200/60 mt-2 leading-relaxed">
+                                Convenience filter only. Always verify the label and consult a doctor for severe allergies.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* ====== SAFETY REPORT HEADER ====== */}
             <div className="glass-card rounded-2xl overflow-hidden shadow-xl shadow-black/20">
@@ -857,14 +1056,44 @@ export default function AnalysisResult({ data, language = 'English' }: AnalysisR
                             )}
 
                             {/* Action buttons */}
-                            <div className="flex gap-2 pt-2">
+                            <div className="flex gap-2 pt-2 flex-wrap no-print">
                                 <button
                                     onClick={() => setShowShareModal(true)}
                                     className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white/[0.05] border border-white/[0.08] hover:bg-white/[0.10] hover:border-white/15 transition-all duration-300 text-sm font-semibold text-gray-400 hover:text-white active:scale-95 min-h-[44px] group"
+                                    aria-label="Share this safety report"
                                 >
-                                    <Share2 size={14} className="group-hover:scale-110 transition-transform" />
+                                    <Share2 size={14} className="group-hover:scale-110 transition-transform" aria-hidden />
                                     {'Share Report'}
                                 </button>
+                                <button
+                                    onClick={handleDownload}
+                                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/[0.05] border border-white/[0.08] hover:bg-white/[0.10] hover:border-white/15 transition-all duration-300 text-sm font-semibold text-gray-400 hover:text-white active:scale-95 min-h-[44px]"
+                                    aria-label="Download the report as a Markdown file"
+                                    title="Download as .md"
+                                >
+                                    <Download size={14} aria-hidden />
+                                    <span className="hidden sm:inline">Download</span>
+                                </button>
+                                {(dangerCount + warningCount) > 0 && filterVerdict === 'all' && (
+                                    <button
+                                        onClick={() => {
+                                            setFilterVerdict(dangerCount > 0 ? 'danger' : 'warning')
+                                            setExpandedIngredients(new Set(
+                                                ingredients
+                                                    .filter(i => {
+                                                        const v = getVerdict(i)
+                                                        return dangerCount > 0 ? v === 'danger' : v === 'warning'
+                                                    })
+                                                    .map(i => i.name),
+                                            ))
+                                        }}
+                                        className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-500/[0.08] hover:bg-red-500/15 border border-red-500/25 transition text-sm font-semibold text-red-300 active:scale-95 min-h-[44px]"
+                                        aria-label={`Filter the list to the ${dangerCount + warningCount} ingredients of concern`}
+                                    >
+                                        <AlertTriangle size={14} aria-hidden />
+                                        {`Show ${dangerCount + warningCount} concern${dangerCount + warningCount === 1 ? '' : 's'}`}
+                                    </button>
+                                )}
                             </div>
                         </div>
 
@@ -1418,7 +1647,7 @@ export default function AnalysisResult({ data, language = 'English' }: AnalysisR
             )}
 
             {/* ====== FOLLOW-UP QUESTION ====== */}
-            <FollowUpQuestion productName={product.product_name} language={language} scanId={data.scanId} />
+            <FollowUpQuestion productName={product.product_name} language={language} scanId={data.scanId} scanToken={data.scanToken} />
 
             {/* ====== FEEDBACK ====== */}
             {data.scanId && (
@@ -1462,6 +1691,7 @@ export default function AnalysisResult({ data, language = 'English' }: AnalysisR
                     onClose={() => setShowShareModal(false)}
                     language={language}
                     scanId={data.scanId}
+                    productName={product.product_name}
                 />
             )}
         </div>

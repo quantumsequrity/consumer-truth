@@ -261,13 +261,12 @@ export async function tryGroundedAsLegacyShape(
     .map(f => f.jurisdiction)
 
   // Map the per_jurisdiction rows into the legacy regulatory_status shape
-  // keyed by jurisdiction slug.
+  // keyed by jurisdiction slug. The legacy UI keys are lowercase with
+  // underscore separators, which matches our internal jurisdiction format
+  // already (US_FDA → us_fda), so just lowercase.
   const reg: Record<string, string> = {}
   for (const f of a.per_jurisdiction) {
-    const slug = f.jurisdiction
-      .toLowerCase()
-      .replace(/_/g, '_')
-    reg[slug] = f.status
+    reg[f.jurisdiction.toLowerCase()] = f.status
   }
 
   // Citations: prefer regulation_ref (short, human-readable), fall back to source_name.

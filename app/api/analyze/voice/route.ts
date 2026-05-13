@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { transcribeAudio, callGeminiWithRetry, model } from '@/lib/gemini'
 import { execute, generateId } from '@/lib/db'
-import { rateLimit, getClientIdentifier, sanitizeInput, validateFileSignature, validateOrigin, getSecurityHeaders } from '@/lib/security'
+import { rateLimit, getClientIdentifier, sanitizeInput, validateFileSignature, validateOrigin, getSecurityHeaders, signScanId } from '@/lib/security'
 
 export const maxDuration = 30
 
@@ -220,6 +220,8 @@ Use ONLY official sources (FSSAI, BIS, FDA, EU, WHO).
       .replace(/<\/?conversation_history>/g, '')
       .trim()
 
+    const scanToken = scanId ? signScanId(scanId) : undefined
+
     return NextResponse.json({
       transcription,
       language: detectedLanguage,
@@ -227,6 +229,7 @@ Use ONLY official sources (FSSAI, BIS, FDA, EU, WHO).
       ingredient: intentData.ingredient_name,
       response: cleanResponse,
       scanId,
+      scanToken,
     }, { headers: getSecurityHeaders() })
   } catch (error) {
     console.error('Voice analysis failed:', error)

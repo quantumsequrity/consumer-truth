@@ -62,15 +62,21 @@ CREATE TABLE IF NOT EXISTS conversations (
 CREATE INDEX IF NOT EXISTS idx_conversations_scan ON conversations(scan_id);
 
 -- Feedback table
+-- ingredient_name is optional: NULL for whole-report feedback (FeedbackButtons),
+-- set for per-ingredient feedback (IngredientFeedback). Both write to the same table.
 CREATE TABLE IF NOT EXISTS feedback (
   id TEXT PRIMARY KEY,
   scan_id TEXT NOT NULL,
   rating TEXT NOT NULL,
   comment TEXT,
+  ingredient_name TEXT,
   created_at TEXT DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_feedback_scan ON feedback(scan_id);
+-- If you are upgrading an existing deployment that pre-dates the
+-- ingredient_name column, run scripts/d1-migrate-feedback-ingredient.sql once
+-- against APP_DB. Fresh deploys created from this schema already include it.
 
 -- Queries table
 CREATE TABLE IF NOT EXISTS queries (

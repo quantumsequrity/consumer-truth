@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { callGeminiWithRetry, model } from '@/lib/gemini'
 import { queryOne } from '@/lib/db'
-import { rateLimit, getClientIdentifier, sanitizeInput, validateLanguage, getSecurityHeaders } from '@/lib/security'
+import { rateLimit, getClientIdentifier, sanitizeInput, validateLanguage, validateOrigin, getSecurityHeaders } from '@/lib/security'
 
 export const maxDuration = 60
 
@@ -9,6 +9,11 @@ const limiter = rateLimit({ windowMs: 60000, maxRequests: 5 })
 
 export async function POST(req: NextRequest) {
   try {
+    // CSRF protection — same-origin browser calls only.
+    if (!validateOrigin(req)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403, headers: getSecurityHeaders() })
+    }
+
     const clientId = getClientIdentifier(req)
     const { allowed } = limiter(clientId)
     if (!allowed) {

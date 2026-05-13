@@ -35,6 +35,16 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Eval (no-LLM unit layers only)
+        # The first two layers of scripts/eval-harness.ts run without network
+        # access — they validate that computeVerdict() returns the right
+        # verdict for known gold cases and that the jurisdiction-leak
+        # validator catches hallucinations. Without these in CI, any change
+        # to the grounded renderer's verdict logic ships unverified.
+        # GEMINI_API_KEY is intentionally unset so the integration layer
+        # short-circuits and the CI cost stays at zero.
+        run: npm run eval
+
       - name: Build
         run: npm run build
         env:

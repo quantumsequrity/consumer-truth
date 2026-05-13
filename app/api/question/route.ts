@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { callGeminiWithRetry, model } from '@/lib/gemini'
 import { query, execute, generateId } from '@/lib/db'
-import { rateLimit, getClientIdentifier, sanitizeInput, validateLanguage, getSecurityHeaders } from '@/lib/security'
+import { rateLimit, getClientIdentifier, sanitizeInput, validateLanguage, validateOrigin, getSecurityHeaders, verifyScanToken } from '@/lib/security'
 
 export const maxDuration = 30
 
@@ -9,6 +9,10 @@ const limiter = rateLimit({ windowMs: 60000, maxRequests: 20 })
 
 export async function POST(req: NextRequest) {
   try {
+    if (!validateOrigin(req)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403, headers: getSecurityHeaders() })
+    }
+
     // Rate limiting
     const clientId = getClientIdentifier(req)
     const { allowed } = limiter(clientId)
@@ -20,7 +24,8 @@ export async function POST(req: NextRequest) {
     const question = sanitizeInput(body.question || '')
     const language = validateLanguage(body.language || 'English')
     const context = sanitizeInput(body.context || '')
-    const scanId = body.scan_id || null
+    const rawScanId = body.scan_id || null
+    const rawScanToken = body.scan_token || null
 
     if (!question || question.length < 3) {
       return NextResponse.json({ error: 'Please provide a valid question' }, { status: 400, headers: getSecurityHeaders() })
@@ -30,13 +35,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Question too long (max 500 characters)' }, { status: 400, headers: getSecurityHeaders() })
     }
 
-    // Fetch conversation history if scan_id is provided
+    // Conversation history is only loaded for callers who can prove they own
+    // this scan. Without a valid scan_token we still answer the question but
+    // we do not surface prior chat — that prevents a leaked scan_id from
+    // exposing another user's conversation.
+    const scanOwned = verifyScanToken(rawScanId, rawScanToken)
+    const scanId = scanOwned ? rawScanId : null
+
     let conversationContext = ''
-    if (scanId) {
+    if (scanOwned && rawScanId) {
       try {
         const history = await query<{ role: string; content: string }>(
           'SELECT role, content FROM conversations WHERE scan_id = ? ORDER BY created_at ASC LIMIT 10',
-          [scanId]
+          [rawScanId]
         )
 
         if (history.length > 0) {

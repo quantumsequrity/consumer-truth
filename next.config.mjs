@@ -20,7 +20,9 @@ const nextConfig = {
         headers: [
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'X-Frame-Options', value: 'DENY' },
-          { key: 'X-XSS-Protection', value: '1; mode=block' },
+          // X-XSS-Protection is deprecated and has been removed from modern
+          // browsers; the legacy XSS auditor has shipped its own bugs.
+          // CSP (below) is the actual XSS defense.
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
           { key: 'Permissions-Policy', value: 'geolocation=(), microphone=(), camera=()' },
           { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },

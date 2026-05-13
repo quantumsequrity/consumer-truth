@@ -124,55 +124,35 @@ export function parseRawOcrToIngredients(rawText: string): string[] {
 }
 
 /**
- * Case-insensitive dedup with substring fuzzy match.
- * If one name is a substring of another, keep the longer one.
+ * Case-insensitive dedup.
+ *
+ * Previously this used a substring "dominator" rule: if one name was a
+ * substring of another, drop the shorter. That collapsed real ingredient
+ * pairs like ["Salt", "Sea Salt"] into ["Sea Salt"] and made "Salt" vanish
+ * from the analysis, which is wrong — they are different ingredients with
+ * different regulatory profiles.
+ *
+ * The replacement is the boring, correct version: exact (case-insensitive,
+ * whitespace-collapsed) match drops the duplicate; everything else is kept.
+ * Order of first appearance is preserved.
  */
 function deduplicateIngredients(allNames: string[]): string[] {
-  const normalized = allNames.map(n => ({
-    original: n.trim(),
-    lower: n.trim().toLowerCase(),
-  }))
+  const seen = new Set<string>()
+  const result: string[] = []
 
-  const result: { original: string; lower: string }[] = []
+  for (const raw of allNames) {
+    const original = raw.trim()
+    if (!original) continue
 
-  for (const item of normalized) {
-    if (!item.original) continue
+    // Normalize for matching: lowercase, collapse internal whitespace.
+    const key = original.toLowerCase().replace(/\s+/g, ' ')
+    if (seen.has(key)) continue
 
-    let dominated = false
-    let dominatesIdx = -1
-
-    for (let i = 0; i < result.length; i++) {
-      const existing = result[i]
-
-      // Exact match
-      if (existing.lower === item.lower) {
-        dominated = true
-        break
-      }
-
-      // Substring: new is contained in existing → skip new
-      if (existing.lower.includes(item.lower)) {
-        dominated = true
-        break
-      }
-
-      // Substring: existing is contained in new → replace existing with new
-      if (item.lower.includes(existing.lower)) {
-        dominatesIdx = i
-        break
-      }
-    }
-
-    if (dominated) continue
-
-    if (dominatesIdx >= 0) {
-      result[dominatesIdx] = item
-    } else {
-      result.push(item)
-    }
+    seen.add(key)
+    result.push(original)
   }
 
-  return result.map(r => r.original)
+  return result
 }
 
 // Parent ingredient names that precede E-number/INS codes

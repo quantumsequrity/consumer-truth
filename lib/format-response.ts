@@ -30,7 +30,6 @@ interface AnalysisResult {
 }
 
 interface FormatOptions {
-  maxChars?: number // Default 4096 (WhatsApp limit)
   showHowItsMade?: boolean // Only for single-ingredient deep-dive
   isProductNameLookup?: boolean // Show photo nudge when ingredients are AI-estimated
 }
@@ -44,7 +43,7 @@ interface FormattedReport {
 }
 
 export function formatIngredientReport(result: AnalysisResult, options: FormatOptions = {}): FormattedReport {
-  const { maxChars = 4096, showHowItsMade = false, isProductNameLookup = false } = options
+  const { showHowItsMade = false, isProductNameLookup = false } = options
   const product = result.productData
 
   let safeCount = 0
